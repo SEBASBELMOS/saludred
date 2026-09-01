@@ -82,7 +82,9 @@ class BedRequest(
     )
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    encounter: Mapped["Encounter"] = relationship(back_populates="bed_requests")
+    encounter: Mapped["Encounter"] = relationship(
+        back_populates="bed_requests", foreign_keys=[encounter_id]
+    )
     requesting_organization: Mapped["Organization"] = relationship(
         foreign_keys=[requesting_organization_id]
     )
@@ -134,7 +136,7 @@ class BedAssignment(
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     bed_request: Mapped["BedRequest"] = relationship(back_populates="assignments")
-    location: Mapped["Location"] = relationship()
+    location: Mapped["Location"] = relationship(foreign_keys=[location_id])
 
     def __repr__(self) -> str:
         return f"<BedAssignment {self.id} {self.status}>"
@@ -170,7 +172,7 @@ class BedStatusEvent(UUIDPrimaryKeyMixin, Base):
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
 
-    location: Mapped["Location"] = relationship()
+    location: Mapped["Location"] = relationship(foreign_keys=[location_id])
 
     def __repr__(self) -> str:
         return f"<BedStatusEvent {self.previous_status}->{self.new_status}>"

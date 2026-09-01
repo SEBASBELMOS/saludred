@@ -62,10 +62,14 @@ class Patient(
     )
 
     eps_organization: Mapped["Organization"] = relationship(
-        back_populates="affiliated_patients"
+        back_populates="affiliated_patients", foreign_keys=[eps_organization_id]
     )
-    encounters: Mapped[list["Encounter"]] = relationship(back_populates="patient")
-    observations: Mapped[list["Observation"]] = relationship(back_populates="patient")
+    encounters: Mapped[list["Encounter"]] = relationship(
+        back_populates="patient", foreign_keys="Encounter.patient_id"
+    )
+    observations: Mapped[list["Observation"]] = relationship(
+        back_populates="patient", foreign_keys="Observation.patient_id"
+    )
     user_account: Mapped["User | None"] = relationship(
         back_populates="patient", foreign_keys="User.patient_id", uselist=False
     )

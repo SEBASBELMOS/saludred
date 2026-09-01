@@ -80,7 +80,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     role: Mapped["Role"] = relationship(back_populates="users")
-    organization: Mapped["Organization | None"] = relationship(back_populates="users")
+    organization: Mapped["Organization | None"] = relationship(
+        back_populates="users", foreign_keys=[organization_id]
+    )
     patient: Mapped["Patient | None"] = relationship(
         back_populates="user_account", foreign_keys=[patient_id]
     )

@@ -62,11 +62,17 @@ class Organization(
         remote_side="Organization.id", back_populates="children"
     )
     children: Mapped[list["Organization"]] = relationship(back_populates="parent")
-    locations: Mapped[list["Location"]] = relationship(back_populates="organization")
-    users: Mapped[list["User"]] = relationship(back_populates="organization")
-    encounters: Mapped[list["Encounter"]] = relationship(back_populates="organization")
+    locations: Mapped[list["Location"]] = relationship(
+        back_populates="organization", foreign_keys="Location.organization_id"
+    )
+    users: Mapped[list["User"]] = relationship(
+        back_populates="organization", foreign_keys="User.organization_id"
+    )
+    encounters: Mapped[list["Encounter"]] = relationship(
+        back_populates="organization", foreign_keys="Encounter.organization_id"
+    )
     affiliated_patients: Mapped[list["Patient"]] = relationship(
-        back_populates="eps_organization"
+        back_populates="eps_organization", foreign_keys="Patient.eps_organization_id"
     )
 
     def __repr__(self) -> str:
@@ -118,7 +124,9 @@ class Location(
         enum_column(BedStatus, "bed_status"), nullable=True, index=True
     )
 
-    organization: Mapped["Organization"] = relationship(back_populates="locations")
+    organization: Mapped["Organization"] = relationship(
+        back_populates="locations", foreign_keys=[organization_id]
+    )
     parent: Mapped["Location | None"] = relationship(
         remote_side="Location.id", back_populates="children"
     )

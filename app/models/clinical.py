@@ -78,11 +78,19 @@ class Encounter(
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    patient: Mapped["Patient"] = relationship(back_populates="encounters")
-    organization: Mapped["Organization"] = relationship(back_populates="encounters")
-    location: Mapped["Location | None"] = relationship()
-    observations: Mapped[list["Observation"]] = relationship(back_populates="encounter")
-    bed_requests: Mapped[list["BedRequest"]] = relationship(back_populates="encounter")
+    patient: Mapped["Patient"] = relationship(
+        back_populates="encounters", foreign_keys=[patient_id]
+    )
+    organization: Mapped["Organization"] = relationship(
+        back_populates="encounters", foreign_keys=[organization_id]
+    )
+    location: Mapped["Location | None"] = relationship(foreign_keys=[location_id])
+    observations: Mapped[list["Observation"]] = relationship(
+        back_populates="encounter", foreign_keys="Observation.encounter_id"
+    )
+    bed_requests: Mapped[list["BedRequest"]] = relationship(
+        back_populates="encounter", foreign_keys="BedRequest.encounter_id"
+    )
 
     def __repr__(self) -> str:
         return f"<Encounter {self.id} {self.status}>"
@@ -137,8 +145,12 @@ class Observation(
         DateTime(timezone=True), nullable=False, index=True
     )
 
-    patient: Mapped["Patient"] = relationship(back_populates="observations")
-    encounter: Mapped["Encounter"] = relationship(back_populates="observations")
+    patient: Mapped["Patient"] = relationship(
+        back_populates="observations", foreign_keys=[patient_id]
+    )
+    encounter: Mapped["Encounter"] = relationship(
+        back_populates="observations", foreign_keys=[encounter_id]
+    )
 
     def __repr__(self) -> str:
         return f"<Observation {self.code} {self.value_numeric or self.value_text}>"
