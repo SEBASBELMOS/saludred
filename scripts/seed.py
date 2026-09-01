@@ -98,14 +98,25 @@ LAST_NAMES = [
     "Rojas", "Vargas", "Mendoza", "Salazar", "Beltran", "Quintero",
 ]
 
-REASONS = [
-    "Dolor abdominal agudo",
-    "Descompensacion respiratoria",
-    "Control postquirurgico",
-    "Sindrome febril en estudio",
-    "Crisis hipertensiva",
-    "Deshidratacion severa",
+CIE10_DIAGNOSES = [
+    ("J00", "Rinofaringitis aguda (resfriado comun)"),
+    ("I10", "Hipertension esencial"),
+    ("E11", "Diabetes mellitus tipo 2"),
+    ("M54", "Dorsalgia"),
+    ("R51", "Cefalea"),
+    ("Z00", "Examen general (control de rutina)"),
 ]
+
+
+def _diagnosis_reason(index: int) -> str:
+    """Compose an encounter reason from a real CIE-10 code.
+
+    The codes come from the course's week-3 synthetic-data example, so the seed
+    data speaks the same vocabulary the professor demonstrated in class.
+    """
+
+    code, description = CIE10_DIAGNOSES[index % len(CIE10_DIAGNOSES)]
+    return f"{code} - {description}"
 
 
 def _abort_if_populated(db: Session) -> None:
@@ -345,7 +356,7 @@ def seed(reset: bool = False) -> None:
                     if index % 5 == 0
                     else (Priority.URGENT if index % 2 else Priority.ROUTINE)
                 ),
-                reason_text=REASONS[index % len(REASONS)],
+                reason_text=_diagnosis_reason(index),
                 started_at=started,
                 ended_at=started + timedelta(days=2) if is_closed else None,
                 created_by=operator.id,
