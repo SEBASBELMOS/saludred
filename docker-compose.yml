@@ -1,0 +1,64 @@
+# Local infrastructure for development and for the FHIR layer.
+#
+# The FHIR server keeps its own PostgreSQL instance, separate from the
+# application database. They are two systems with different lifecycles: the
+# application owns the operational model, HAPI owns the interoperable
+# representation. Sharing one database would blur that boundary and couple our
+# migrations to HAPI's internal schema.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: saludred-db
+    environment:
+      POSTGRES_USER: saludred
+      POSTGRES_PASSWORD: saludred
+      POSTGRES_DB: saludred
+    ports:
+      - "5433:5432"
+    volumes:
+      - saludred-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U saludred"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  hapi-db:
+    image: postgres:16-alpine
+    container_name: saludred-hapi-db
+    environment:
+      POSTGRES_USER: hapi
+      POSTGRES_PASSWORD: hapi
+      POSTGRES_DB: hapi
+    volumes:
+      - saludred-hapi-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hapi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  hapi:
+    image: hapiproject/hapi:v7.4.0
+    container_name: saludred-hapi
+    depends_on:
+      hapi-db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://hapi-db:5432/hapi
+      SPRING_DATASOURCE_USERNAME: hapi
+      SPRING_DATASOURCE_PASSWORD: hapi
+      SPRING_DATASOURCE_DRIVERCLASSNAME: org.postgresql.Driver
+      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgres94Dialect
+      HAPI_FHIR_FHIR_VERSION: R4
+      # Conditional update resolves "create or update by identifier" in a single
+      # request, which is how the integration service stays idempotent.
+      HAPI_FHIR_ALLOW_MULTIPLE_DELETE: "true"
+      HAPI_FHIR_REUSE_CACHED_SEARCH_RESULTS_MILLIS: "-1"
+
+volumes:
+  saludred-db-data:
+  saludred-hapi-db-data:
