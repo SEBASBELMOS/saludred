@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
-from sqlalchemy import text
 
+from app.api.error_handlers import register_error_handlers
+from app.api.routes import encounters, health, observations, organizations, patients
 from app.core.config import get_settings
-from app.core.database import engine
 
 settings = get_settings()
 
@@ -22,25 +22,10 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
+register_error_handlers(app)
 
-@app.get("/health", tags=["operacion"], summary="Estado del servicio")
-def health() -> dict[str, str]:
-    """Liveness probe.
-
-    Answers without touching the database so it stays meaningful even while the
-    database is unreachable: it reports that the process is up, nothing more.
-    """
-
-    return {"status": "ok", "environment": settings.environment}
-
-
-@app.get("/health/db", tags=["operacion"], summary="Conectividad con la base de datos")
-def health_db() -> dict[str, str]:
-    """Readiness probe covering the database connection."""
-
-    try:
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
-    except Exception as exc:  # noqa: BLE001 - surfaced verbatim for diagnosis
-        return {"status": "error", "detail": str(exc)}
-    return {"status": "ok"}
+app.include_router(health.router)
+app.include_router(patients.router)
+app.include_router(encounters.router)
+app.include_router(observations.router)
+app.include_router(organizations.router)

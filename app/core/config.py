@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,7 +25,9 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = Field(
-        ..., description="SQLAlchemy URL for the application PostgreSQL database"
+        ...,
+        validation_alias=AliasChoices("DATABASE_URL", "PG_CONNECTION_STRING"),
+        description="SQLAlchemy URL for the application PostgreSQL database",
     )
     database_echo: bool = False
 
