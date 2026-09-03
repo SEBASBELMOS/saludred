@@ -8,6 +8,7 @@ from app.api.error_handlers import register_error_handlers
 from app.api.routes import (
     audit,
     auth,
+    integration,
     encounters,
     health,
     me,
@@ -41,3 +42,4 @@ app.include_router(observations.router)
 app.include_router(organizations.router)
 app.include_router(me.router)
 app.include_router(audit.router)
+app.include_router(integration.router)
