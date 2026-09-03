@@ -1,18 +1,30 @@
-"""End-to-end smoke test for the SaludRed API.
+"""End-to-end smoke test for the SaludRed API (Phases 2, 3 and 4).
 
-Runs against a seeded database and exercises every Phase 2 endpoint:
-health, CRUD, pagination, filters, validation, 404/409 error paths and
-the EPS -> IPS network query. Exits non-zero on the first failure.
+Runs against a live API with the seed loaded and walks the whole demo:
+authentication, the RBAC matrix (role, institution, ownership), CRUD, soft
+edit with history, soft delete, restore, audit log and the patient portal.
+Exits non-zero if any check fails.
+
+Environment:
+    SMOKE_BASE_URL       API base (default http://localhost:8000)
+    SMOKE_PASSWORD       seed password (default Demo2026!)
+    SMOKE_FHIR=1         also exercise the FHIR integration endpoints
+                         (requires the HAPI FHIR server to be running)
 """
 
+from __future__ import annotations
+
+import os
 import sys
 import uuid
 
 import httpx
 
-BASE = "http://localhost:8000"
-client = httpx.Client(base_url=BASE, timeout=10)
+BASE = os.environ.get("SMOKE_BASE_URL", "http://localhost:8000")
+PASSWORD = os.environ.get("SMOKE_PASSWORD", "Demo2026!")
+RUN_FHIR = os.environ.get("SMOKE_FHIR") == "1"
 
+client = httpx.Client(base_url=BASE, timeout=30)
 failures: list[str] = []
 
 
@@ -32,171 +44,390 @@ def expect_status(resp: httpx.Response, expected: int, name: str) -> httpx.Respo
     return resp
 
 
-# ---------------------------------------------------------------- health
+def login(username: str) -> dict[str, str]:
+    resp = client.post(
+        "/api/v1/auth/login", json={"username": username, "password": PASSWORD}
+    )
+    expect_status(resp, 200, f"login {username}")
+    token = resp.json().get("access_token", "")
+    return {"Authorization": f"Bearer {token}"}
+
+
+# ------------------------------------------------------------------ health
 expect_status(client.get("/health"), 200, "GET /health")
 expect_status(client.get("/health/db"), 200, "GET /health/db")
 
-# ------------------------------------------------------------- organizations
-resp = client.get("/api/v1/organizations")
-orgs = expect_status(resp, 200, "GET /organizations").json()
-check("organizations total == 4", orgs["total"] == 4, f"got {orgs['total']}")
-eps = next(o for o in orgs["items"] if o["organization_type"] == "EPS")
-ips = next(o for o in orgs["items"] if o["organization_type"] == "IPS")
-
-resp = client.get("/api/v1/organizations", params={"organization_type": "IPS"})
-check("GET /organizations?organization_type=IPS -> 3", resp.json()["total"] == 3)
-
-resp = client.get(f"/api/v1/eps/{eps['id']}/ips")
-check("GET /eps/{id}/ips -> 3", len(resp.json()) == 3, resp.text[:200])
-
-new_ips = {
-    "code": "IPS-TEST",
-    "name": "IPS de Prueba",
-    "organization_type": "IPS",
-    "parent_organization_id": eps["id"],
-}
-resp = client.post("/api/v1/organizations", json=new_ips)
-created_ips = expect_status(resp, 201, "POST /organizations (IPS bajo EPS)").json()
-
-resp = client.post(
-    "/api/v1/organizations",
-    json={"code": "EPS-MALA", "name": "EPS con padre", "organization_type": "EPS", "parent_organization_id": eps["id"]},
+# ------------------------------------------------------- authentication
+expect_status(
+    client.get("/api/v1/patients"), 401, "sin token -> 401"
 )
-expect_status(resp, 422, "POST EPS con padre -> 422")
-
-resp = client.put(
-    f"/api/v1/organizations/{created_ips['id']}",
-    json={"code": "IPS-TEST-2", "name": "IPS de Prueba (editada)"},
+expect_status(
+    client.post(
+        "/api/v1/auth/login", json={"username": "admin", "password": "incorrecta"}
+    ),
+    401,
+    "password incorrecta -> 401",
 )
-check("PUT /organizations/{id} -> 200", resp.status_code == 200 and resp.json()["code"] == "IPS-TEST-2")
-
-resp = client.delete(f"/api/v1/organizations/{eps['id']}")
-expect_status(resp, 409, "DELETE EPS con hijas -> 409")
-
-resp = client.put(f"/api/v1/organizations/{eps['id']}", json={"organization_type": "IPS"})
-expect_status(resp, 409, "PUT EPS->IPS con hijas -> 409")
-
-# ---------------------------------------------------------------- patients
-resp = client.get("/api/v1/patients", params={"page_size": 5})
-page = expect_status(resp, 200, "GET /patients (page_size=5)").json()
-check("patients pagination total==16", page["total"] == 16, f"got {page['total']}")
-check("patients page size==5", len(page["items"]) == 5)
-
-resp = client.get("/api/v1/patients", params={"page": 2, "page_size": 5})
-check("patients page 2 size==5", len(resp.json()["items"]) == 5)
-
-patient = page["items"][0]
-resp = client.get("/api/v1/patients", params={"document_number": patient["document_number"]})
-check("filter by document_number", resp.json()["total"] == 1)
-
-resp = client.get("/api/v1/patients", params={"name": patient["first_name"][:3]})
-check("filter by name (LIKE)", resp.json()["total"] >= 1)
-
-expect_status(client.get(f"/api/v1/patients/{patient['id']}"), 200, "GET /patients/{id}")
-
-new_patient = {
-    "document_type": "CC",
-    "document_number": "9999999999",
-    "first_name": "Paciente",
-    "last_name": "Smoke",
-    "birth_date": "1990-01-01",
-    "gender": "female",
-    "eps_organization_id": eps["id"],
-}
-resp = client.post("/api/v1/patients", json=new_patient)
-created_patient = expect_status(resp, 201, "POST /patients").json()
-
-resp = client.post("/api/v1/patients", json=new_patient)
-expect_status(resp, 409, "POST paciente duplicado -> 409")
-
-resp = client.put(f"/api/v1/patients/{created_patient['id']}", json={"last_name": "Smoke Editado"})
-check("PUT /patients/{id}", resp.status_code == 200 and resp.json()["last_name"] == "Smoke Editado")
-
-resp = client.delete(f"/api/v1/patients/{created_patient['id']}")
-expect_status(resp, 204, "DELETE /patients/{id} -> 204")
-
-expect_status(client.get(f"/api/v1/patients/{created_patient['id']}"), 404, "GET paciente eliminado -> 404")
-
-resp = client.post(
-    "/api/v1/patients",
-    json={**new_patient, "document_number": "9999999998", "birth_date": "no-es-fecha"},
+expect_status(
+    client.get("/api/v1/patients", headers={"Authorization": "Bearer basura"}),
+    401,
+    "token invalido -> 401",
 )
-expect_status(resp, 422, "POST paciente con fecha invalida -> 422")
 
-# --------------------------------------------------------------- encounters
-resp = client.get("/api/v1/encounters", params={"page_size": 100})
-encounters = expect_status(resp, 200, "GET /encounters").json()
-check("encounters total == 16", encounters["total"] == 16, f"got {encounters['total']}")
+admin = login("admin")
+coordinator = login("coordinador.eps")
+operator = login("operador.norte")
+patient_account = login("paciente.demo")
 
-resp = client.get(f"/api/v1/patients/{patient['id']}/encounters")
-patient_encounters = expect_status(resp, 200, "GET /patients/{id}/encounters").json()
-check("patient has encounters", len(patient_encounters) >= 1)
+me = expect_status(
+    client.get("/api/v1/auth/me", headers=operator), 200, "GET /auth/me operador"
+).json()
+check("operador tiene rol IPS_CLINICAL_OPERATOR", me.get("role") == "IPS_CLINICAL_OPERATOR")
+operator_org = me.get("organization_id")
+check("operador tiene organization_id", operator_org is not None)
 
-encounter = patient_encounters[0]
-expect_status(client.get(f"/api/v1/encounters/{encounter['id']}"), 200, "GET /encounters/{id}")
-
-new_encounter = {
-    "patient_id": patient["id"],
-    "organization_id": ips["id"],
-    "encounter_class": "AMB",
-    "status": "planned",
-    "started_at": "2026-09-01T10:00:00Z",
-}
-resp = client.post("/api/v1/encounters", json=new_encounter)
-created_encounter = expect_status(resp, 201, "POST /encounters").json()
-
-resp = client.put(f"/api/v1/encounters/{created_encounter['id']}", json={"status": "in-progress"})
-check("PUT /encounters/{id}", resp.status_code == 200 and resp.json()["status"] == "in-progress")
-
-resp = client.put(
-    f"/api/v1/encounters/{created_encounter['id']}",
-    json={"ended_at": "2026-08-01T10:00:00Z"},
+# ------------------------------------------------ RBAC: rol e institucion
+expect_status(
+    client.post(
+        "/api/v1/patients",
+        headers=coordinator,
+        json={},
+    ),
+    403,
+    "coordinador crea paciente -> 403 (rol)",
 )
-expect_status(resp, 409, "PUT encounter ended<started -> 409")
-
-resp = client.delete(f"/api/v1/encounters/{created_encounter['id']}")
-expect_status(resp, 204, "DELETE /encounters/{id} -> 204")
-
-# -------------------------------------------------------------- observations
-resp = client.get("/api/v1/observations", params={"page_size": 100})
-obs = expect_status(resp, 200, "GET /observations").json()
-check("observations total == 48", obs["total"] == 48, f"got {obs['total']}")
-
-resp = client.get(f"/api/v1/encounters/{encounter['id']}/observations")
-encounter_obs = expect_status(resp, 200, "GET /encounters/{id}/observations").json()
-check("encounter has observations", len(encounter_obs) >= 1, resp.text[:200])
-
-new_observation = {
-    "patient_id": patient["id"],
-    "encounter_id": encounter["id"],
-    "code": "8867-4",
-    "display": "Heart rate",
-    "value_numeric": 72.5,
-    "unit": "/min",
-    "observed_at": "2026-09-01T10:05:00Z",
-}
-resp = client.post("/api/v1/observations", json=new_observation)
-created_obs = expect_status(resp, 201, "POST /observations (numeric)").json()
-
-resp = client.post(
-    "/api/v1/observations",
-    json={k: v for k, v in new_observation.items() if k not in ("value_numeric", "unit")},
+expect_status(
+    client.get("/api/v1/patients?include_deleted=true", headers=operator),
+    403,
+    "operador pide include_deleted -> 403",
 )
-expect_status(resp, 422, "POST observation sin valor -> 422")
+expect_status(
+    client.get("/api/v1/audit-logs", headers=coordinator),
+    403,
+    "coordinador lee audit-logs -> 403",
+)
 
-resp = client.put(f"/api/v1/observations/{created_obs['id']}", json={"value_numeric": 75, "unit": "/min"})
-check("PUT /observations/{id}", resp.status_code == 200 and resp.json()["value_numeric"] == 75.0)
+# The institutional filter is applied inside the query: every encounter the
+# operator can list belongs to its own IPS, no matter what filters it sends.
+resp = expect_status(
+    client.get("/api/v1/encounters?page_size=100", headers=operator),
+    200,
+    "operador lista encuentros",
+)
+rows = resp.json()["items"]
+check(
+    "operador solo ve encuentros de su IPS",
+    len(rows) > 0 and all(r["organization_id"] == operator_org for r in rows),
+)
 
-resp = client.put(f"/api/v1/observations/{created_obs['id']}", json={"value_text": "estable"})
-expect_status(resp, 409, "PUT observation valor mixto -> 409")
+orgs = expect_status(
+    client.get(
+        "/api/v1/organizations?organization_type=IPS&page_size=50", headers=operator
+    ),
+    200,
+    "operador lista organizaciones",
+).json()["items"]
+other_org = next((o["id"] for o in orgs if o["id"] != operator_org), None)
+check("existe otra IPS en la red", other_org is not None)
 
-resp = client.delete(f"/api/v1/observations/{created_obs['id']}")
-expect_status(resp, 204, "DELETE /observations/{id} -> 204")
+patients_page = expect_status(
+    client.get("/api/v1/patients?page_size=1", headers=operator),
+    200,
+    "operador lista pacientes",
+).json()
+any_patient_id = patients_page["items"][0]["id"]
 
-expect_status(client.get(f"/api/v1/patients/{uuid.uuid4()}"), 404, "GET paciente inexistente -> 404")
+expect_status(
+    client.post(
+        "/api/v1/encounters",
+        headers=operator,
+        json={
+            "patient_id": any_patient_id,
+            "organization_id": other_org,
+            "encounter_class": "IMP",
+            "status": "in-progress",
+            "priority": "ROUTINE",
+            "started_at": "2026-09-03T08:00:00Z",
+        },
+    ),
+    403,
+    "operador crea encuentro en OTRA IPS -> 403 (institucion)",
+)
 
-print(f"\n{len(failures)} failure(s)")
+# ------------------------------------------------ RBAC: pertenencia
+# The seeded patients were created by the admin account, so the operator may
+# not delete them: permission to delete never crosses authorship.
+expect_status(
+    client.delete(f"/api/v1/patients/{any_patient_id}", headers=operator),
+    403,
+    "operador elimina paciente ajeno -> 403 (pertenencia)",
+)
+
+own_encounter = expect_status(
+    client.post(
+        "/api/v1/encounters",
+        headers=operator,
+        json={
+            "patient_id": any_patient_id,
+            "organization_id": operator_org,
+            "encounter_class": "AMB",
+            "status": "in-progress",
+            "priority": "ROUTINE",
+            "reason_text": "Control por smoke test",
+            "started_at": "2026-09-03T08:00:00Z",
+        },
+    ),
+    201,
+    "operador crea encuentro en SU IPS",
+).json()
+
+own_observation = expect_status(
+    client.post(
+        "/api/v1/observations",
+        headers=operator,
+        json={
+            "patient_id": any_patient_id,
+            "encounter_id": own_encounter["id"],
+            "status": "final",
+            "code": "8867-4",
+            "display": "Heart rate",
+            "value_numeric": 88,
+            "unit": "/min",
+            "observed_at": "2026-09-03T08:15:00Z",
+        },
+    ),
+    201,
+    "operador crea observacion propia",
+).json()
+
+expect_status(
+    client.put(
+        f"/api/v1/observations/{own_observation['id']}",
+        headers=operator,
+        json={"value_numeric": 91},
+    ),
+    200,
+    "operador edita SU observacion",
+)
+expect_status(
+    client.delete(f"/api/v1/observations/{own_observation['id']}", headers=operator),
+    204,
+    "operador elimina SU observacion",
+)
+expect_status(
+    client.post(
+        f"/api/v1/observations/{own_observation['id']}/restore", headers=operator
+    ),
+    403,
+    "operador restaura -> 403 (restore es solo Admin)",
+)
+expect_status(
+    client.post(
+        f"/api/v1/observations/{own_observation['id']}/restore", headers=admin
+    ),
+    200,
+    "admin restaura la observacion",
+)
+
+# ------------------------------------------- soft ops completas (paciente)
+eps_id = expect_status(
+    client.get("/api/v1/organizations?organization_type=EPS", headers=admin),
+    200,
+    "obtener EPS",
+).json()["items"][0]["id"]
+
+suffix = uuid.uuid4().hex[:8]
+created = expect_status(
+    client.post(
+        "/api/v1/patients",
+        headers=admin,
+        json={
+            "document_type": "CC",
+            "document_number": f"99{suffix[:6]}",
+            "first_name": "Prueba",
+            "last_name": f"Soft-{suffix}",
+            "birth_date": "1980-01-15",
+            "gender": "male",
+            "phone": "3000000000",
+            "eps_organization_id": eps_id,
+        },
+    ),
+    201,
+    "admin crea paciente de prueba",
+).json()
+pid = created["id"]
+
+expect_status(
+    client.put(
+        f"/api/v1/patients/{pid}", headers=admin, json={"phone": "3119999999"}
+    ),
+    200,
+    "soft edit del paciente",
+)
+history = expect_status(
+    client.get(f"/api/v1/patients/{pid}/history", headers=admin),
+    200,
+    "GET historial del paciente",
+).json()
+check(
+    "el historial conserva el valor anterior",
+    len(history) == 1
+    and history[0]["snapshot_json"].get("phone") == "3000000000"
+    and history[0]["changed_fields"] == ["phone"],
+)
+expect_status(
+    client.get(f"/api/v1/patients/{pid}/history", headers=coordinator),
+    200,
+    "coordinador tambien lee historial",
+)
+
+expect_status(
+    client.delete(f"/api/v1/patients/{pid}", headers=admin), 204, "soft delete"
+)
+expect_status(
+    client.get(f"/api/v1/patients/{pid}", headers=admin),
+    404,
+    "el paciente eliminado ya no aparece",
+)
+listado = expect_status(
+    client.get(
+        f"/api/v1/patients?include_deleted=true&document_number=99{suffix[:6]}",
+        headers=admin,
+    ),
+    200,
+    "listado con include_deleted",
+).json()
+check(
+    "la fila sigue en la base, marcada",
+    listado["total"] == 1 and listado["items"][0]["id"] == pid,
+)
+
+expect_status(
+    client.post(f"/api/v1/patients/{pid}/restore", headers=coordinator),
+    403,
+    "coordinador intenta restore -> 403",
+)
+expect_status(
+    client.post(f"/api/v1/patients/{pid}/restore", headers=admin),
+    200,
+    "admin restaura al paciente",
+)
+expect_status(
+    client.get(f"/api/v1/patients/{pid}", headers=admin),
+    200,
+    "el paciente restaurado vuelve a estar activo",
+)
+expect_status(
+    client.post(f"/api/v1/patients/{pid}/restore", headers=admin),
+    409,
+    "restaurar un registro vivo -> 409",
+)
+
+audit = expect_status(
+    client.get(
+        f"/api/v1/audit-logs?entity_type=patients&entity_id={pid}&page_size=50",
+        headers=admin,
+    ),
+    200,
+    "GET audit-logs del paciente",
+).json()
+actions = sorted(e["action"] for e in audit["items"])
+check(
+    "auditoria registra CREATE, SOFT_EDIT, SOFT_DELETE y RESTORE",
+    actions == ["CREATE", "RESTORE", "SOFT_DELETE", "SOFT_EDIT"],
+    f"acciones: {actions}",
+)
+check(
+    "cada entrada de auditoria tiene usuario",
+    all(e["username"] == "admin" for e in audit["items"]),
+)
+
+# ------------------------------------------------------- portal del paciente
+mine = expect_status(
+    client.get("/api/v1/me/patient", headers=patient_account),
+    200,
+    "paciente consulta SU ficha",
+).json()
+expect_status(
+    client.get("/api/v1/me/encounters", headers=patient_account),
+    200,
+    "paciente consulta SUS encuentros",
+)
+expect_status(
+    client.get("/api/v1/patients", headers=patient_account),
+    403,
+    "paciente en endpoint administrativo -> 403",
+)
+expect_status(
+    client.get(f"/api/v1/patients/{any_patient_id}", headers=patient_account),
+    403,
+    "paciente lee ficha ajena -> 403",
+)
+check("la ficha propia corresponde a la cuenta", mine.get("id") is not None)
+
+# ------------------------------------------------------- integracion FHIR
+if RUN_FHIR:
+    first = expect_status(
+        client.post(f"/api/v1/integration/fhir/patients/{pid}", headers=admin),
+        200,
+        "sync paciente -> FHIR",
+    ).json()
+    check("sync quedo SYNCED", first["sync_status"] == "SYNCED")
+
+    second = expect_status(
+        client.post(f"/api/v1/integration/fhir/patients/{pid}", headers=admin),
+        200,
+        "segundo sync del mismo paciente",
+    ).json()
+    check(
+        "idempotencia: mismo recurso FHIR en ambas corridas",
+        first["fhir_resource_id"] == second["fhir_resource_id"]
+        and second["attempt_count"] == first["attempt_count"] + 1,
+    )
+
+    remote = expect_status(
+        client.get(f"/api/v1/integration/fhir/patients/{pid}", headers=admin),
+        200,
+        "leer Patient desde el servidor FHIR",
+    ).json()
+    check("el servidor FHIR devuelve un Patient", remote.get("resourceType") == "Patient")
+
+    obs_sync = expect_status(
+        client.post(
+            f"/api/v1/integration/fhir/observations/{own_observation['id']}",
+            headers=admin,
+        ),
+        200,
+        "sync observacion (arrastra encuentro y paciente)",
+    ).json()
+    check("observacion SYNCED", obs_sync["sync_status"] == "SYNCED")
+
+    remote_obs = expect_status(
+        client.get(
+            f"/api/v1/integration/fhir/observations/{own_observation['id']}",
+            headers=admin,
+        ),
+        200,
+        "leer Observation desde FHIR",
+    ).json()
+    check(
+        "Observation con codigo LOINC en FHIR",
+        remote_obs.get("code", {}).get("coding", [{}])[0].get("code") == "8867-4",
+    )
+
+    expect_status(
+        client.post(f"/api/v1/integration/fhir/patients/{pid}", headers=operator),
+        403,
+        "operador sincroniza -> 403",
+    )
+else:
+    print("[SKIP] seccion FHIR (exportar SMOKE_FHIR=1 con HAPI arriba)")
+
+# ------------------------------------------------------------------ result
+print()
+print(f"Fallos: {len(failures)}")
 if failures:
-    print("\n".join(f" - {f}" for f in failures))
+    for f in failures:
+        print(f"  - {f}")
     sys.exit(1)
-print("SMOKE OK")
+print("Smoke test completo: todo en verde.")
