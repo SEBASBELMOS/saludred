@@ -1,0 +1,19 @@
+# El entorno virtual local no debe entrar a la imagen: la imagen instala sus
+# propias dependencias para la arquitectura del contenedor.
+.venv/
+venv/
+
+.git/
+.gitignore
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Los secretos se inyectan en tiempo de ejecucion, nunca se hornean en la imagen.
+.env
+
+.DS_Store
+*.log

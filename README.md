@@ -104,36 +104,44 @@ La justificación de cada rol está en
 
 ## Puesta en marcha
 
-Requisitos: Python 3.12, Docker y Docker Compose.
+Único requisito: **Docker y Docker Compose**. No hace falta instalar Python ni
+dependencias en la máquina: todo vive dentro de los contenedores.
 
 ```bash
-# 1. Dependencias
-python3.12 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-
-# 2. Configuración
+# 1. Configuración
 cp .env.example .env
-# Editar .env con la URL de la base de datos y un JWT_SECRET_KEY propio.
-# Generar el secreto con:
-python -c "import secrets; print(secrets.token_urlsafe(48))"
+# Editar .env y poner un JWT_SECRET_KEY propio. Para generarlo:
+#   docker run --rm python:3.12-slim python -c "import secrets; print(secrets.token_urlsafe(48))"
 
-# 3. Infraestructura local (PostgreSQL de desarrollo + HAPI FHIR)
-docker compose up -d
-
-# 4. Esquema y datos
-alembic upgrade head
-python -m scripts.seed
-
-# 5. API
-uvicorn app.main:app --reload
+# 2. Levantar todo
+docker compose up -d --build
 ```
 
-| Servicio | URL local |
+Eso construye la imagen de la API y arranca cuatro servicios. Al iniciar, la API
+espera a que PostgreSQL acepte conexiones, aplica las migraciones y carga los
+datos sintéticos. Si la base ya tiene datos, el seed se omite solo.
+
+| Servicio | URL |
 |---|---|
 | API | http://localhost:8000 |
 | Swagger | http://localhost:8000/docs |
 | HAPI FHIR | http://localhost:8080/fhir |
+| PostgreSQL | `localhost:5433` |
+
+El servidor FHIR tarda entre 30 y 60 segundos en el primer arranque, mientras
+construye su esquema. Está listo cuando responde:
+
+```bash
+curl http://localhost:8080/fhir/metadata
+```
+
+Comandos útiles:
+
+```bash
+docker compose logs -f api        # seguir el arranque
+docker compose down               # detener
+docker compose down -v            # detener y borrar los datos
+```
 
 ## Autenticación y uso
 
@@ -163,10 +171,16 @@ directamente desde el servidor FHIR.
 
 ### Verificación
 
+Los tres comandos se ejecutan dentro del contenedor de la API, donde ya están
+todas las dependencias instaladas:
+
 ```bash
-pytest                          # unit tests (sin base de datos)
-python -m scripts.smoke_api     # smoke E2E contra la API corriendo
-python -m scripts.demo_join     # consulta JOIN de validación del modelo
+docker compose exec api pytest                       # pruebas unitarias (sin base de datos)
+docker compose exec api python -m scripts.demo_join  # consulta JOIN de validación del modelo
+docker compose exec api python -m scripts.smoke_api  # prueba end-to-end de la API
+
+# Incluye además la integración FHIR (requiere HAPI ya disponible):
+docker compose exec -e SMOKE_FHIR=1 api python -m scripts.smoke_api
 ```
 
 ## Datos

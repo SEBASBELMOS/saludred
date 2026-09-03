@@ -44,6 +44,19 @@ def expect_status(resp: httpx.Response, expected: int, name: str) -> httpx.Respo
     return resp
 
 
+def as_json(resp: httpx.Response) -> dict:
+    """Parse a body defensively.
+
+    A failed check already got reported by ``expect_status``; a non-JSON error
+    page must not crash the run and hide every check that comes after it.
+    """
+
+    try:
+        return resp.json()
+    except ValueError:
+        return {}
+
+
 def login(username: str) -> dict[str, str]:
     resp = client.post(
         "/api/v1/auth/login", json={"username": username, "password": PASSWORD}
@@ -87,11 +100,27 @@ operator_org = me.get("organization_id")
 check("operador tiene organization_id", operator_org is not None)
 
 # ------------------------------------------------ RBAC: rol e institucion
+eps_id = expect_status(
+    client.get("/api/v1/organizations?organization_type=EPS", headers=admin),
+    200,
+    "obtener EPS",
+).json()["items"][0]["id"]
+
+# The body must be VALID: FastAPI validates the payload before the endpoint
+# runs, so an empty body would prove a 422, not the role rejection.
 expect_status(
     client.post(
         "/api/v1/patients",
         headers=coordinator,
-        json={},
+        json={
+            "document_type": "CC",
+            "document_number": "55555555",
+            "first_name": "No",
+            "last_name": "Autorizado",
+            "birth_date": "1970-01-01",
+            "gender": "male",
+            "eps_organization_id": eps_id,
+        },
     ),
     403,
     "coordinador crea paciente -> 403 (rol)",
@@ -230,12 +259,6 @@ expect_status(
 )
 
 # ------------------------------------------- soft ops completas (paciente)
-eps_id = expect_status(
-    client.get("/api/v1/organizations?organization_type=EPS", headers=admin),
-    200,
-    "obtener EPS",
-).json()["items"][0]["id"]
-
 suffix = uuid.uuid4().hex[:8]
 created = expect_status(
     client.post(
@@ -367,49 +390,50 @@ check("la ficha propia corresponde a la cuenta", mine.get("id") is not None)
 
 # ------------------------------------------------------- integracion FHIR
 if RUN_FHIR:
-    first = expect_status(
+    first = as_json(expect_status(
         client.post(f"/api/v1/integration/fhir/patients/{pid}", headers=admin),
         200,
         "sync paciente -> FHIR",
-    ).json()
-    check("sync quedo SYNCED", first["sync_status"] == "SYNCED")
+    ))
+    check("sync quedo SYNCED", first.get("sync_status") == "SYNCED")
 
-    second = expect_status(
+    second = as_json(expect_status(
         client.post(f"/api/v1/integration/fhir/patients/{pid}", headers=admin),
         200,
         "segundo sync del mismo paciente",
-    ).json()
+    ))
     check(
         "idempotencia: mismo recurso FHIR en ambas corridas",
-        first["fhir_resource_id"] == second["fhir_resource_id"]
-        and second["attempt_count"] == first["attempt_count"] + 1,
+        first.get("fhir_resource_id") is not None
+        and first.get("fhir_resource_id") == second.get("fhir_resource_id")
+        and second.get("attempt_count") == first.get("attempt_count", 0) + 1,
     )
 
-    remote = expect_status(
+    remote = as_json(expect_status(
         client.get(f"/api/v1/integration/fhir/patients/{pid}", headers=admin),
         200,
         "leer Patient desde el servidor FHIR",
-    ).json()
+    ))
     check("el servidor FHIR devuelve un Patient", remote.get("resourceType") == "Patient")
 
-    obs_sync = expect_status(
+    obs_sync = as_json(expect_status(
         client.post(
             f"/api/v1/integration/fhir/observations/{own_observation['id']}",
             headers=admin,
         ),
         200,
         "sync observacion (arrastra encuentro y paciente)",
-    ).json()
-    check("observacion SYNCED", obs_sync["sync_status"] == "SYNCED")
+    ))
+    check("observacion SYNCED", obs_sync.get("sync_status") == "SYNCED")
 
-    remote_obs = expect_status(
+    remote_obs = as_json(expect_status(
         client.get(
             f"/api/v1/integration/fhir/observations/{own_observation['id']}",
             headers=admin,
         ),
         200,
         "leer Observation desde FHIR",
-    ).json()
+    ))
     check(
         "Observation con codigo LOINC en FHIR",
         remote_obs.get("code", {}).get("coding", [{}])[0].get("code") == "8867-4",

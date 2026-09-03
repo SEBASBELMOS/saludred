@@ -137,10 +137,15 @@ def _record_result(
 ) -> FhirSyncLog:
     record = get_sync_record(db, entity_type, entity_id)
     if record is None:
+        # Column defaults (attempt_count=0, sync_status=PENDING) only apply at
+        # INSERT time, not at construction: a fresh instance carries None, so
+        # the counter must be initialized explicitly before incrementing.
         record = FhirSyncLog(
             entity_type=entity_type,
             entity_id=entity_id,
             fhir_resource_type=resource_type,
+            sync_status=SyncStatus.PENDING,
+            attempt_count=0,
         )
         db.add(record)
 

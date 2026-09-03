@@ -1,28 +1,63 @@
-# Local infrastructure for development and for the FHIR layer.
+# Infraestructura completa del proyecto.
 #
-# The FHIR server keeps its own PostgreSQL instance, separate from the
-# application database. They are two systems with different lifecycles: the
-# application owns the operational model, HAPI owns the interoperable
-# representation. Sharing one database would blur that boundary and couple our
-# migrations to HAPI's internal schema.
+# `docker compose up -d` levanta las cuatro piezas: la base de datos de la
+# aplicacion, la API, el servidor HAPI FHIR y la base de datos propia de HAPI.
+# No hace falta instalar Python ni dependencias en la maquina anfitriona.
+#
+# El servidor FHIR conserva su propia base de datos, separada de la de la
+# aplicacion. Son dos sistemas con ciclos de vida distintos: la aplicacion es
+# dueña del modelo operativo, HAPI es dueño de la representacion interoperable.
+# Compartir una sola base acoplaria nuestras migraciones al esquema interno de
+# HAPI, que no controlamos.
 
 services:
   db:
     image: postgres:16-alpine
     container_name: saludred-db
     environment:
-      POSTGRES_USER: saludred
-      POSTGRES_PASSWORD: saludred
-      POSTGRES_DB: saludred
+      POSTGRES_USER: ${POSTGRES_USER:-saludred}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-saludred}
+      POSTGRES_DB: ${POSTGRES_DB:-saludred}
     ports:
+      # Publicado para poder inspeccionar la base con un cliente SQL durante la
+      # demostracion. 5433 en el anfitrion para no chocar con un PostgreSQL local.
       - "5433:5432"
     volumes:
       - saludred-db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U saludred"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-saludred}"]
       interval: 5s
       timeout: 5s
+      retries: 12
+
+  api:
+    build: .
+    container_name: saludred-api
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Dentro de la red de Compose los servicios se resuelven por nombre, no
+      # por localhost. Estas dos variables sobrescriben lo que traiga el .env,
+      # que esta escrito para ejecucion directa en el anfitrion.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-saludred}:${POSTGRES_PASSWORD:-saludred}@db:5432/${POSTGRES_DB:-saludred}
+      FHIR_BASE_URL: http://hapi:8080/fhir
+      SEED_ON_START: ${SEED_ON_START:-true}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import httpx,sys; sys.exit(0 if httpx.get('http://localhost:8000/health').status_code==200 else 1)"
+      interval: 10s
+      timeout: 5s
       retries: 10
+      start_period: 40s
+    restart: unless-stopped
 
   hapi-db:
     image: postgres:16-alpine
@@ -37,7 +72,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U hapi"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 12
 
   hapi:
     image: hapiproject/hapi:v7.4.0
@@ -52,12 +87,17 @@ services:
       SPRING_DATASOURCE_USERNAME: hapi
       SPRING_DATASOURCE_PASSWORD: hapi
       SPRING_DATASOURCE_DRIVERCLASSNAME: org.postgresql.Driver
-      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgres94Dialect
+      # Clave con puntos a proposito. El dialecto vive bajo la propiedad-mapa
+      # spring.jpa.properties.*, y el "relaxed binding" de Spring no alcanza
+      # claves de mapa que contienen puntos cuando la variable viene en
+      # MAYUSCULAS_CON_GUION_BAJO. Escrita asi, HAPI genera nextval() de
+      # PostgreSQL; escrita en mayusculas, genera sintaxis ANSI que PostgreSQL
+      # rechaza con "syntax error at or near seq_resource_id".
+      "spring.jpa.properties.hibernate.dialect": ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect
       HAPI_FHIR_FHIR_VERSION: R4
-      # Conditional update resolves "create or update by identifier" in a single
-      # request, which is how the integration service stays idempotent.
       HAPI_FHIR_ALLOW_MULTIPLE_DELETE: "true"
       HAPI_FHIR_REUSE_CACHED_SEARCH_RESULTS_MILLIS: "-1"
+    restart: unless-stopped
 
 volumes:
   saludred-db-data:
