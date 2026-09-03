@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 
 from app.fhir import mappers
 from app.models.enums import BedStatus, EncounterStatus, LocationType, OrganizationType
