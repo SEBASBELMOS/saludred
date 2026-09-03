@@ -135,9 +135,39 @@ uvicorn app.main:app --reload
 | Swagger | http://localhost:8000/docs |
 | HAPI FHIR | http://localhost:8080/fhir |
 
-Las cuentas de demostración se crean con la contraseña definida en
-`SEED_DEFAULT_PASSWORD`. Son cuentas sintéticas de desarrollo y no deben
-reutilizarse en un despliegue real.
+## Autenticación y uso
+
+Todos los endpoints de `/api/v1` (salvo el login) exigen un token Bearer:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "<SEED_DEFAULT_PASSWORD>"}'
+```
+
+En Swagger, el botón **Authorize** acepta el `access_token` devuelto. Cuentas
+creadas por el seed: `admin`, `coordinador.eps`, `operador.norte`,
+`operador.sur`, `operador.centro` y `paciente.demo`, todas con la contraseña
+definida en `SEED_DEFAULT_PASSWORD`. Son cuentas sintéticas de desarrollo y no
+deben reutilizarse en un despliegue real.
+
+Operaciones de trazabilidad expuestas por entidad: `PUT` conserva la versión
+anterior (consultable en `GET /{id}/history`), `DELETE` es lógico, y
+`POST /{id}/restore` (solo Admin) revierte la eliminación. La bitácora completa
+se consulta en `GET /api/v1/audit-logs` (solo Admin).
+
+La sincronización hacia FHIR se opera en `/api/v1/integration/fhir/*`: `POST`
+empuja el registro (y sus dependencias) mediante actualización condicional por
+identificador — reejecutarla no duplica recursos — y `GET` lee el recurso
+directamente desde el servidor FHIR.
+
+### Verificación
+
+```bash
+pytest                          # unit tests (sin base de datos)
+python -m scripts.smoke_api     # smoke E2E contra la API corriendo
+python -m scripts.demo_join     # consulta JOIN de validación del modelo
+```
 
 ## Datos
 
