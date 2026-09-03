@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.enums import DocumentType
+from app.models.identity import User
 from app.models.patient import Patient
 from app.schemas.patient import PatientCreate, PatientUpdate
+from app.services import soft_ops
 from app.services.errors import ConflictError, NotFoundError, commit
 
 
@@ -21,10 +22,18 @@ def list_patients(
     page_size: int,
     document_number: str | None = None,
     name: str | None = None,
+    include_deleted: bool = False,
 ) -> tuple[list[Patient], int]:
-    """Page through live patients, optionally filtering by document or name."""
+    """Page through patients, optionally filtering by document or name.
 
-    stmt = select(Patient).where(Patient.deleted_at.is_(None))
+    ``include_deleted`` is an ADMIN-only view (enforced at the route): it is how
+    the soft delete is demonstrated to actually be soft -- the row is still
+    there, just marked.
+    """
+
+    stmt = select(Patient)
+    if not include_deleted:
+        stmt = stmt.where(Patient.deleted_at.is_(None))
     if document_number:
         stmt = stmt.where(Patient.document_number == document_number)
     if name:
@@ -58,19 +67,25 @@ def get_patient(db: Session, patient_id: uuid.UUID) -> Patient:
     return patient
 
 
-def create_patient(db: Session, data: PatientCreate) -> Patient:
+def create_patient(db: Session, data: PatientCreate, *, actor: User) -> Patient:
     if _exists_with_document(db, data.document_type, data.document_number):
         raise ConflictError("Ya existe un paciente con ese tipo y numero de documento")
 
-    patient = Patient(**data.model_dump())
+    patient = Patient(**data.model_dump(), created_by=actor.id)
     db.add(patient)
+    db.flush()
+    soft_ops.audit_create(db, patient, actor=actor)
     commit(db)
     db.refresh(patient)
     return patient
 
 
-def update_patient(db: Session, patient: Patient, data: PatientUpdate) -> Patient:
+def update_patient(
+    db: Session, patient: Patient, data: PatientUpdate, *, actor: User
+) -> Patient:
     changes = data.model_dump(exclude_unset=True)
+    if not changes:
+        return patient
 
     if "document_type" in changes or "document_number" in changes:
         new_type = changes.get("document_type", patient.document_type)
@@ -80,19 +95,22 @@ def update_patient(db: Session, patient: Patient, data: PatientUpdate) -> Patien
                 "Ya existe un paciente con ese tipo y numero de documento"
             )
 
+    soft_ops.snapshot_before_update(
+        db, patient, actor=actor, changed_fields=sorted(changes)
+    )
     for field, value in changes.items():
         setattr(patient, field, value)
+    patient.updated_by = actor.id
 
     commit(db)
     db.refresh(patient)
     return patient
 
 
-def soft_delete_patient(db: Session, patient: Patient) -> None:
+def soft_delete_patient(db: Session, patient: Patient, *, actor: User) -> None:
     """Mark the patient as deleted. The row is kept for the restore flow."""
 
-    patient.deleted_at = datetime.now(timezone.utc)
-    commit(db)
+    soft_ops.soft_delete(db, patient, actor=actor)
 
 
 def _exists_with_document(

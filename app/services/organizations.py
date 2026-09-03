@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.enums import OrganizationType
+from app.models.identity import User
 from app.models.organization import Organization
 from app.schemas.organization import OrganizationCreate, OrganizationUpdate
+from app.services import soft_ops
 from app.services.errors import ConflictError, NotFoundError, commit
 
 
@@ -66,21 +67,27 @@ def list_ips_for_eps(db: Session, eps_id: uuid.UUID) -> list[Organization]:
     )
 
 
-def create_organization(db: Session, data: OrganizationCreate) -> Organization:
+def create_organization(
+    db: Session, data: OrganizationCreate, *, actor: User
+) -> Organization:
     _require_code_available(db, data.code)
     _validate_parent(db, data.organization_type, data.parent_organization_id)
 
-    organization = Organization(**data.model_dump())
+    organization = Organization(**data.model_dump(), created_by=actor.id)
     db.add(organization)
+    db.flush()
+    soft_ops.audit_create(db, organization, actor=actor)
     commit(db)
     db.refresh(organization)
     return organization
 
 
 def update_organization(
-    db: Session, organization: Organization, data: OrganizationUpdate
+    db: Session, organization: Organization, data: OrganizationUpdate, *, actor: User
 ) -> Organization:
     changes = data.model_dump(exclude_unset=True)
+    if not changes:
+        return organization
 
     if "code" in changes:
         _require_code_available(db, changes["code"], exclude_id=organization.id)
@@ -99,15 +106,21 @@ def update_organization(
                 "No se puede convertir a IPS una organizacion con IPS hijas"
             )
 
+    soft_ops.snapshot_before_update(
+        db, organization, actor=actor, changed_fields=sorted(changes)
+    )
     for field, value in changes.items():
         setattr(organization, field, value)
+    organization.updated_by = actor.id
 
     commit(db)
     db.refresh(organization)
     return organization
 
 
-def soft_delete_organization(db: Session, organization: Organization) -> None:
+def soft_delete_organization(
+    db: Session, organization: Organization, *, actor: User
+) -> None:
     live_children = db.scalar(
         select(func.count())
         .select_from(Organization)
@@ -121,8 +134,7 @@ def soft_delete_organization(db: Session, organization: Organization) -> None:
             "No se puede eliminar la organizacion: tiene IPS asociadas activas"
         )
 
-    organization.deleted_at = datetime.now(timezone.utc)
-    commit(db)
+    soft_ops.soft_delete(db, organization, actor=actor)
 
 
 def _require_code_available(

@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.clinical import Encounter
 from app.models.enums import EncounterStatus
+from app.models.identity import User
 from app.models.organization import Location, Organization
 from app.models.patient import Patient
 from app.schemas.encounter import EncounterCreate, EncounterUpdate
+from app.services import soft_ops
 from app.services.errors import ConflictError, NotFoundError, commit
 
 
@@ -44,14 +46,25 @@ def list_encounters(
     return items, total
 
 
-def list_encounters_for_patient(db: Session, patient_id: uuid.UUID) -> list[Encounter]:
-    return list(
-        db.scalars(
-            select(Encounter)
-            .where(Encounter.patient_id == patient_id, Encounter.deleted_at.is_(None))
-            .order_by(Encounter.started_at.desc())
-        )
+def list_encounters_for_patient(
+    db: Session,
+    patient_id: uuid.UUID,
+    *,
+    organization_id: uuid.UUID | None = None,
+) -> list[Encounter]:
+    """List a patient's live encounters.
+
+    ``organization_id`` is the institutional scope filter: a clinical operator
+    receives only the encounters of its own IPS, applied inside the query so
+    the restriction cannot be bypassed by pagination tricks.
+    """
+
+    stmt = select(Encounter).where(
+        Encounter.patient_id == patient_id, Encounter.deleted_at.is_(None)
     )
+    if organization_id is not None:
+        stmt = stmt.where(Encounter.organization_id == organization_id)
+    return list(db.scalars(stmt.order_by(Encounter.started_at.desc())))
 
 
 def get_encounter(db: Session, encounter_id: uuid.UUID) -> Encounter:
@@ -65,22 +78,26 @@ def get_encounter(db: Session, encounter_id: uuid.UUID) -> Encounter:
     return encounter
 
 
-def create_encounter(db: Session, data: EncounterCreate) -> Encounter:
+def create_encounter(db: Session, data: EncounterCreate, *, actor: User) -> Encounter:
     require_patient(db, data.patient_id)
     _require_organization(db, data.organization_id)
     _require_location(db, data.location_id, organization_id=data.organization_id)
 
-    encounter = Encounter(**data.model_dump())
+    encounter = Encounter(**data.model_dump(), created_by=actor.id)
     db.add(encounter)
+    db.flush()
+    soft_ops.audit_create(db, encounter, actor=actor)
     commit(db)
     db.refresh(encounter)
     return encounter
 
 
 def update_encounter(
-    db: Session, encounter: Encounter, data: EncounterUpdate
+    db: Session, encounter: Encounter, data: EncounterUpdate, *, actor: User
 ) -> Encounter:
     changes = data.model_dump(exclude_unset=True)
+    if not changes:
+        return encounter
 
     if "patient_id" in changes and changes["patient_id"] is not None:
         require_patient(db, changes["patient_id"])
@@ -93,8 +110,12 @@ def update_encounter(
             organization_id=changes.get("organization_id", encounter.organization_id),
         )
 
+    soft_ops.snapshot_before_update(
+        db, encounter, actor=actor, changed_fields=sorted(changes)
+    )
     for field, value in changes.items():
         setattr(encounter, field, value)
+    encounter.updated_by = actor.id
 
     _validate_period(encounter.started_at, encounter.ended_at)
     commit(db)
@@ -102,9 +123,8 @@ def update_encounter(
     return encounter
 
 
-def soft_delete_encounter(db: Session, encounter: Encounter) -> None:
-    encounter.deleted_at = datetime.now(timezone.utc)
-    commit(db)
+def soft_delete_encounter(db: Session, encounter: Encounter, *, actor: User) -> None:
+    soft_ops.soft_delete(db, encounter, actor=actor)
 
 
 def require_patient(db: Session, patient_id: uuid.UUID) -> None:

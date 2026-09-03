@@ -6,9 +6,11 @@ from fastapi import FastAPI
 
 from app.api.error_handlers import register_error_handlers
 from app.api.routes import (
+    audit,
     auth,
     encounters,
     health,
+    me,
     observations,
     organizations,
     patients,
@@ -37,3 +39,5 @@ app.include_router(patients.router)
 app.include_router(encounters.router)
 app.include_router(observations.router)
 app.include_router(organizations.router)
+app.include_router(me.router)
+app.include_router(audit.router)
