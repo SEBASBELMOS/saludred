@@ -18,6 +18,14 @@ class ConflictError(ServiceError):
     """The request violates a uniqueness, reference or state constraint."""
 
 
+class ForbiddenError(ServiceError):
+    """The authenticated user is not allowed to perform this operation."""
+
+
+class FhirGatewayError(ServiceError):
+    """The FHIR server could not be reached or rejected the request."""
+
+
 def commit(db: Session) -> None:
     """Commit, translating database-level integrity violations into 409s.
 

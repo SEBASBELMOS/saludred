@@ -5,7 +5,14 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from app.api.error_handlers import register_error_handlers
-from app.api.routes import encounters, health, observations, organizations, patients
+from app.api.routes import (
+    auth,
+    encounters,
+    health,
+    observations,
+    organizations,
+    patients,
+)
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -25,6 +32,7 @@ app = FastAPI(
 register_error_handlers(app)
 
 app.include_router(health.router)
+app.include_router(auth.router)
 app.include_router(patients.router)
 app.include_router(encounters.router)
 app.include_router(observations.router)
