@@ -11,6 +11,27 @@ from app.core.database import engine
 router = APIRouter(tags=["operacion"])
 
 
+@router.get("/", summary="Indice del servicio")
+def index() -> dict[str, object]:
+    """Punto de entrada del servicio.
+
+    Sin esta ruta, abrir la URL base devuelve un 404 que parece una caida del
+    servicio cuando en realidad esta sano. Quien llegue aqui obtiene el nombre
+    del sistema y donde continuar.
+    """
+
+    return {
+        "servicio": get_settings().project_name,
+        "version": "0.1.0",
+        "estado": "operativo",
+        "documentacion": "/docs",
+        "esquema_openapi": "/openapi.json",
+        "salud": "/health",
+        "salud_base_datos": "/health/db",
+        "api": get_settings().api_v1_prefix,
+    }
+
+
 @router.get("/health", summary="Estado del servicio")
 def health() -> dict[str, str]:
     """Liveness probe.
