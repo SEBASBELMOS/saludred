@@ -39,11 +39,12 @@ services:
     env_file:
       - .env
     environment:
-      # Dentro de la red de Compose los servicios se resuelven por nombre, no
-      # por localhost. Estas dos variables sobrescriben lo que traiga el .env,
-      # que esta escrito para ejecucion directa en el anfitrion.
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-saludred}:${POSTGRES_PASSWORD:-saludred}@db:5432/${POSTGRES_DB:-saludred}
-      FHIR_BASE_URL: http://hapi:8080/fhir
+      # Por defecto se usan los servicios internos de Compose, que se resuelven
+      # por nombre y no por localhost. Si el .env define DATABASE_URL (por
+      # ejemplo, la cadena de una base gestionada en Neon), ese valor gana y el
+      # contenedor `db` queda sin uso.
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://saludred:saludred@db:5432/saludred}
+      FHIR_BASE_URL: ${FHIR_BASE_URL:-http://hapi:8080/fhir}
       SEED_ON_START: ${SEED_ON_START:-true}
     ports:
       - "8000:8000"
@@ -97,6 +98,49 @@ services:
       HAPI_FHIR_FHIR_VERSION: R4
       HAPI_FHIR_ALLOW_MULTIPLE_DELETE: "true"
       HAPI_FHIR_REUSE_CACHED_SEARCH_RESULTS_MILLIS: "-1"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------
+  # Publicacion en internet (perfil "public")
+  #
+  # Estos dos servicios NO arrancan con `docker compose up`. Se levantan solo
+  # cuando se necesita exponer el sistema:
+  #
+  #     docker compose --profile public up -d
+  #
+  # Cada uno abre un Quick Tunnel de Cloudflare: una conexion SALIENTE hacia
+  # Cloudflare que devuelve una URL publica https://algo.trycloudflare.com. No
+  # se abre ningun puerto en el router ni queda nada nuevo escuchando en la red
+  # local, que es lo que hace seguro este mecanismo.
+  #
+  # Se necesitan DOS tuneles porque el enunciado exige publicar dos servicios
+  # distintos: la API y el servidor FHIR.
+  #
+  # La URL de cada tunel se lee de sus registros:
+  #     docker compose logs tunnel-api  | findstr trycloudflare
+  #     docker compose logs tunnel-fhir | findstr trycloudflare
+  #
+  # Importante: la URL CAMBIA cada vez que el contenedor se reinicia. Se genera
+  # el dia de la sustentacion y se comparte entonces.
+  # ---------------------------------------------------------------------
+  tunnel-api:
+    # Sin version fija a proposito: cloudflared rechaza clientes viejos contra
+    # su infraestructura, asi que anclar una version envejece mal.
+    image: cloudflare/cloudflared:latest
+    container_name: saludred-tunnel-api
+    profiles: ["public"]
+    depends_on:
+      - api
+    command: tunnel --no-autoupdate --url http://api:8000
+    restart: unless-stopped
+
+  tunnel-fhir:
+    image: cloudflare/cloudflared:latest
+    container_name: saludred-tunnel-fhir
+    profiles: ["public"]
+    depends_on:
+      - hapi
+    command: tunnel --no-autoupdate --url http://hapi:8080
     restart: unless-stopped
 
 volumes:

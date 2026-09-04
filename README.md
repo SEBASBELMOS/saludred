@@ -79,7 +79,9 @@ Trece tablas relacionadas por llaves foráneas, agrupadas en cuatro bloques:
 **Trazabilidad** — `record_versions`, `audit_log`, `fhir_sync_log`
 
 El detalle completo, incluido el mapeo hacia FHIR, está en
-[`docs/modelo-datos-y-fhir.md`](docs/modelo-datos-y-fhir.md).
+[`docs/modelo-datos-y-fhir.md`](docs/modelo-datos-y-fhir.md). Los diagramas de
+arquitectura, entidad-relación, sincronización y control de acceso están en
+[`docs/diagramas.md`](docs/diagramas.md).
 
 Dos decisiones que conviene conocer antes de leer el esquema:
 
@@ -142,6 +144,33 @@ docker compose logs -f api        # seguir el arranque
 docker compose down               # detener
 docker compose down -v            # detener y borrar los datos
 ```
+
+### Usar una base de datos gestionada (Neon)
+
+Por defecto la aplicación usa el PostgreSQL del contenedor. Para apuntar a una
+base gestionada, descomentar `DATABASE_URL` en `.env` con la cadena de Neon,
+cambiando el prefijo `postgresql://` por `postgresql+psycopg://` y conservando
+`?sslmode=require`. El contenedor `db` queda entonces sin uso.
+
+### Publicar en internet
+
+```bash
+docker compose --profile public up -d
+```
+
+Eso levanta dos túneles de Cloudflare —uno para la API y otro para el servidor
+FHIR— que devuelven URLs públicas `https://...trycloudflare.com`. No se abre
+ningún puerto en el router: el túnel establece una conexión saliente.
+
+Para leer las URLs generadas:
+
+```bash
+bash deploy/urls-publicas.sh        # Linux y macOS
+.\deploy\urls-publicas.ps1          # Windows
+```
+
+> Las URLs de este tipo de túnel **cambian cada vez que el contenedor se
+> reinicia**. Se generan cuando se van a usar y se comparten en ese momento.
 
 ## Autenticación y uso
 
