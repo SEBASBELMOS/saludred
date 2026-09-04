@@ -165,9 +165,15 @@ ningún puerto en el router: el túnel establece una conexión saliente.
 Para leer las URLs generadas:
 
 ```bash
-bash deploy/urls-publicas.sh        # Linux y macOS
-.\deploy\urls-publicas.ps1          # Windows
+# Linux y macOS
+bash deploy/urls-publicas.sh
+
+# Windows (Bypass afecta solo a esta invocación, no cambia la configuración)
+powershell -ExecutionPolicy Bypass -File .\deploy\urls-publicas.ps1
 ```
+
+El servidor FHIR sirve bajo la ruta `/fhir`, así que su CapabilityStatement
+queda en `<URL de FHIR>/fhir/metadata`.
 
 > Las URLs de este tipo de túnel **cambian cada vez que el contenedor se
 > reinicia**. Se generan cuando se van a usar y se comparten en ese momento.

@@ -2,7 +2,11 @@
 #
 # Uso:
 #   docker compose --profile public up -d
-#   .\deploy\urls-publicas.ps1
+#   powershell -ExecutionPolicy Bypass -File .\deploy\urls-publicas.ps1
+#
+# Se invoca con -ExecutionPolicy Bypass porque Windows bloquea por defecto la
+# ejecucion de scripts .ps1 descargados o clonados. El parametro afecta solo a
+# esta invocacion: no cambia la configuracion del sistema.
 #
 # Las URLs cambian cada vez que los contenedores de tunel se reinician.
 
