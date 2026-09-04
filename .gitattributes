@@ -1,0 +1,20 @@
+# Normalizacion de finales de linea.
+#
+# Git en Windows convierte a CRLF al clonar (core.autocrlf=true por defecto).
+# Los archivos que se ejecutan DENTRO de los contenedores Linux no toleran esa
+# conversion: bash lee `set -euo pipefail\r` y falla con "invalid option name",
+# dejando el contenedor en un bucle de reinicios. Estas reglas fuerzan LF para
+# todo lo que cruza hacia Linux, independientemente del sistema donde se clone.
+
+* text=auto eol=lf
+
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.py        text eol=lf
+
+# Los scripts de Windows si deben conservar CRLF.
+*.ps1       text eol=crlf
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
