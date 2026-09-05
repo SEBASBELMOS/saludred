@@ -212,6 +212,27 @@ de la IPS Sur, ni un registro de la IPS Norte creado por otro operador.
 
 ## 4. Trazabilidad
 
+### 4.1 Por qué el borrado no puede ser físico
+
+La decisión de no permitir eliminación física no es una preferencia técnica: en
+Colombia, la **Resolución 1995 de 1999** del Ministerio de Salud establece las
+normas para el manejo de la historia clínica y obliga a conservarla de forma
+íntegra durante los plazos de retención definidos.
+
+Eso tiene una consecuencia directa sobre el diseño: un `DELETE` que elimine
+físicamente una fila clínica es inaceptable, porque destruye información que la
+institución está obligada a custodiar. De ahí que **todas** las entidades
+clínicas usen borrado lógico, y que la restauración exista como operación de
+primera clase y no como un procedimiento manual sobre la base de datos.
+
+El escenario que esto cubre es concreto y cotidiano: un profesional que está
+diligenciando una evolución elimina por error un registro que no debía tocar. Con
+borrado físico, ese dato se perdió. Con borrado lógico, el registro sigue
+existiendo, queda marcado como eliminado con la marca de quién y cuándo, y un
+administrador puede restaurarlo.
+
+### 4.2 Qué se registra en cada operación
+
 | Operación | Qué queda registrado |
 |---|---|
 | Soft edit (`PUT`) | Fila previa completa en `record_versions` y entrada `SOFT_EDIT` en `audit_log` |
