@@ -98,6 +98,12 @@ services:
       # PostgreSQL; escrita en mayusculas, genera sintaxis ANSI que PostgreSQL
       # rechaza con "syntax error at or near seq_resource_id".
       "spring.jpa.properties.hibernate.dialect": ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect
+      # Detras del tunel, Cloudflare entrega el trafico a HAPI por HTTP aunque
+      # el visitante llegue por HTTPS. Sin esto HAPI arma sus enlaces con
+      # http://, el navegador los bloquea por contenido mixto y su interfaz
+      # Swagger no carga. Con FRAMEWORK, Spring respeta la cabecera
+      # X-Forwarded-Proto y genera los enlaces con el esquema correcto.
+      "server.forward-headers-strategy": FRAMEWORK
       HAPI_FHIR_FHIR_VERSION: R4
       HAPI_FHIR_ALLOW_MULTIPLE_DELETE: "true"
       HAPI_FHIR_REUSE_CACHED_SEARCH_RESULTS_MILLIS: "-1"
