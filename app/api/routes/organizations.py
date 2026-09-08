@@ -16,13 +16,17 @@ from app.models.enums import OrganizationType, RoleCode
 from app.models.organization import Organization
 from app.schemas.audit import RecordVersionRead
 from app.schemas.common import Page
+from app.models.enums import OrganizationType as OrgType
 from app.schemas.organization import (
+    EpsCreate,
+    IpsCreate,
     OrganizationCreate,
     OrganizationRead,
     OrganizationUpdate,
 )
 from app.services import organizations as organizations_service
 from app.services import soft_ops
+from app.services.errors import ConflictError
 
 router = APIRouter(prefix="/api/v1", tags=["organizaciones"])
 
@@ -134,6 +138,64 @@ def organization_history(
         db, Organization, organization_id, label="Organizacion"
     )
     return soft_ops.list_history(db, Organization, organization_id)
+
+
+@router.post(
+    "/eps",
+    response_model=OrganizationRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear una EPS (solo Admin)",
+)
+def create_eps(db: DbSession, user: CurrentUser, payload: EpsCreate) -> OrganizationRead:
+    """Crea la organizacion raiz de una red.
+
+    Una EPS no cuelga de nadie, asi que este formulario solo pide codigo y
+    nombre. Usar este endpoint en lugar del generico evita el error mas comun:
+    enviar una organizacion padre para una EPS, que el modelo rechaza.
+    """
+
+    authz.require_admin(user)
+    return organizations_service.create_organization(
+        db,
+        OrganizationCreate(
+            code=payload.code,
+            name=payload.name,
+            organization_type=OrgType.EPS,
+            parent_organization_id=None,
+        ),
+        actor=user,
+    )
+
+
+@router.post(
+    "/eps/{eps_id}/ips",
+    response_model=OrganizationRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear una IPS dentro de una EPS (solo Admin)",
+)
+def create_ips(
+    db: DbSession, user: CurrentUser, eps_id: uuid.UUID, payload: IpsCreate
+) -> OrganizationRead:
+    """Crea una institucion prestadora dentro de una EPS.
+
+    La EPS va en la ruta, de modo que la jerarquia queda explicita y no hay que
+    recordar que una IPS necesita organizacion padre.
+    """
+
+    authz.require_admin(user)
+    eps = organizations_service.get_organization(db, eps_id)
+    if eps.organization_type != OrgType.EPS:
+        raise ConflictError("La organizacion indicada en la ruta no es una EPS")
+    return organizations_service.create_organization(
+        db,
+        OrganizationCreate(
+            code=payload.code,
+            name=payload.name,
+            organization_type=OrgType.IPS,
+            parent_organization_id=eps_id,
+        ),
+        actor=user,
+    )
 
 
 @router.get(

@@ -34,6 +34,29 @@ class OrganizationCreate(OrganizationBase):
     """Payload accepted by ``POST /organizations``."""
 
 
+class EpsCreate(BaseModel):
+    """Payload accepted by ``POST /eps``.
+
+    Una EPS es la raiz de la red: no tiene organizacion padre, y por eso este
+    formulario ni siquiera pregunta por una. El campo existia en el formulario
+    generico y era la fuente del error mas comun al crear organizaciones.
+    """
+
+    code: str = Field(min_length=1, max_length=32, examples=["EPS-NUEVA"])
+    name: str = Field(min_length=1, max_length=200, examples=["EPS Ejemplo"])
+
+
+class IpsCreate(BaseModel):
+    """Payload accepted by ``POST /eps/{eps_id}/ips``.
+
+    Una IPS siempre cuelga de una EPS. Como la EPS va en la ruta, tampoco hay
+    que elegirla en el cuerpo.
+    """
+
+    code: str = Field(min_length=1, max_length=32, examples=["IPS-NUEVA"])
+    name: str = Field(min_length=1, max_length=200, examples=["Clinica Ejemplo"])
+
+
 class OrganizationUpdate(BaseModel):
     """Payload accepted by ``PUT /organizations/{id}`` (partial update).
 
