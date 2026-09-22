@@ -27,9 +27,11 @@ function Get-TunnelUrl {
 
 Write-Output "URLs publicas"
 Write-Output "-------------"
+Write-Output (Get-TunnelUrl -Servicio "tunnel-web"  -Etiqueta "WEB:")
 Write-Output (Get-TunnelUrl -Servicio "tunnel-api"  -Etiqueta "API:")
 Write-Output (Get-TunnelUrl -Servicio "tunnel-fhir" -Etiqueta "FHIR:")
 Write-Output ""
 Write-Output "Verificar desde fuera de la red (datos moviles):"
+Write-Output "  <URL de WEB>             -> la aplicacion"
 Write-Output "  <URL de API>/docs        -> Swagger"
-Write-Output "  <URL de FHIR>/metadata   -> CapabilityStatement del servidor FHIR"
+Write-Output "  <URL de FHIR>/fhir/metadata -> CapabilityStatement del servidor FHIR"

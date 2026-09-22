@@ -23,9 +23,11 @@ extraer() {
 
 echo "URLs publicas"
 echo "-------------"
+extraer tunnel-web  "WEB:"
 extraer tunnel-api  "API:"
 extraer tunnel-fhir "FHIR:"
 echo
 echo "Verificar desde fuera de la red (datos moviles):"
+echo "  <URL de WEB>             -> la aplicacion"
 echo "  <URL de API>/docs        -> Swagger"
-echo "  <URL de FHIR>/metadata   -> CapabilityStatement del servidor FHIR"
+echo "  <URL de FHIR>/fhir/metadata -> CapabilityStatement del servidor FHIR"

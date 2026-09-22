@@ -60,6 +60,25 @@ services:
       start_period: 40s
     restart: unless-stopped
 
+  web:
+    # Microservicio de interfaz: nginx sirve el front y hace de proxy inverso
+    # hacia la API. El navegador solo habla con este origen, asi que el front y
+    # la API comparten origen y no hace falta configurar CORS.
+    build: ./frontend
+    image: saludred-web:latest
+    container_name: saludred-web
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8081:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
   hapi-db:
     image: postgres:16-alpine
     container_name: saludred-hapi-db
@@ -122,8 +141,8 @@ services:
   # se abre ningun puerto en el router ni queda nada nuevo escuchando en la red
   # local, que es lo que hace seguro este mecanismo.
   #
-  # Se necesitan DOS tuneles porque el enunciado exige publicar dos servicios
-  # distintos: la API y el servidor FHIR.
+  # Hay tres tuneles: la interfaz web (que ademas da acceso a la API por su
+  # proxy), la API directa y el servidor FHIR, que el enunciado exige publicar.
   #
   # La URL de cada tunel se lee de sus registros:
   #     docker compose logs tunnel-api  | findstr trycloudflare
@@ -150,6 +169,17 @@ services:
     depends_on:
       - hapi
     command: tunnel --no-autoupdate --url http://hapi:8080
+    restart: unless-stopped
+
+  tunnel-web:
+    # Publica la interfaz. Como el front hace de proxy hacia la API, esta sola
+    # URL sirve la aplicacion completa.
+    image: cloudflare/cloudflared:latest
+    container_name: saludred-tunnel-web
+    profiles: ["public"]
+    depends_on:
+      - web
+    command: tunnel --no-autoupdate --url http://web:80
     restart: unless-stopped
 
 volumes:

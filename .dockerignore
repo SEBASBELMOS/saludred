@@ -17,3 +17,5 @@ __pycache__/
 
 .DS_Store
 *.log
+# The API image does not need the frontend: it has its own image.
+frontend/

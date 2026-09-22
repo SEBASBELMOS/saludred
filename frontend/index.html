@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SaludRed — Coordinación de camas EPS/IPS</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Login -->
+  <section id="view-login" class="login-view">
+    <div class="login-card">
+      <div class="brand">SaludRed</div>
+      <p class="login-subtitle">Coordinación de camas hospitalarias en la red EPS/IPS</p>
+      <form id="login-form" novalidate>
+        <label class="field">
+          <span class="field-label">Usuario</span>
+          <input id="login-username" type="text" autocomplete="username" required>
+        </label>
+        <label class="field">
+          <span class="field-label">Contraseña</span>
+          <span class="password-wrap">
+            <input id="login-password" type="password" autocomplete="current-password" required>
+            <button type="button" id="toggle-password" class="btn btn-ghost" aria-label="Mostrar u ocultar contraseña">Mostrar</button>
+          </span>
+        </label>
+        <div id="login-error" class="form-error hidden" role="alert"></div>
+        <button type="submit" id="login-submit" class="btn btn-primary btn-block">Iniciar sesión</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- App shell -->
+  <div id="app-shell" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand sidebar-brand">SaludRed</div>
+      <nav id="nav" aria-label="Navegación principal"></nav>
+      <div class="sidebar-footer">
+        <div id="user-info" class="user-info"></div>
+        <button id="logout-btn" class="btn btn-outline btn-block">Cerrar sesión</button>
+      </div>
+    </aside>
+
+    <main class="content">
+
+      <section id="view-capacity" class="view hidden">
+        <h2 class="view-title">Capacidad de la red</h2>
+        <div id="status-capacity"></div>
+        <div id="capacity-summary" class="summary-grid"></div>
+        <div id="capacity-orgs"></div>
+      </section>
+
+      <section id="view-queue" class="view hidden">
+        <h2 class="view-title">Cola de espera</h2>
+        <div id="status-queue"></div>
+        <p class="hint">
+          Orden de atención: primero la prioridad clínica
+          (<span class="badge badge-emergency">Emergencia</span> →
+          <span class="badge badge-urgent">Urgente</span> →
+          <span class="badge badge-routine">Rutina</span>).
+          A igual prioridad, atiende primero quien lleva más tiempo esperando.
+        </p>
+        <div id="queue-table-wrap"></div>
+      </section>
+
+      <section id="view-beds" class="view hidden">
+        <h2 class="view-title">Camas por institución</h2>
+        <div id="status-beds"></div>
+        <div class="toolbar">
+          <label class="field-inline">
+            <span class="field-label">Institución</span>
+            <select id="beds-org-select"></select>
+          </label>
+          <label class="field-inline">
+            <span class="field-label">Estado</span>
+            <select id="beds-status-filter">
+              <option value="">Todos</option>
+              <option value="AVAILABLE">Disponible</option>
+              <option value="OCCUPIED">Ocupada</option>
+              <option value="RESERVED">Reservada</option>
+              <option value="CLEANING">Limpieza</option>
+              <option value="BLOCKED">Bloqueada</option>
+              <option value="MAINTENANCE">Mantenimiento</option>
+            </select>
+          </label>
+          <label class="field-inline">
+            <span class="field-label">Servicio</span>
+            <input id="beds-service-filter" type="text" placeholder="p. ej. UCI Adultos">
+          </label>
+          <button id="beds-apply-btn" class="btn btn-primary">Aplicar</button>
+        </div>
+        <div id="beds-table-wrap"></div>
+      </section>
+
+      <section id="view-patients" class="view hidden">
+        <h2 class="view-title">Pacientes</h2>
+        <div id="status-patients"></div>
+        <div class="toolbar">
+          <button id="new-patient-btn" class="btn btn-primary">Nuevo paciente</button>
+        </div>
+        <div id="patients-table-wrap"></div>
+        <div id="patients-pagination" class="pagination"></div>
+      </section>
+
+      <section id="view-portal" class="view hidden">
+        <h2 class="view-title">Mi información</h2>
+        <div id="status-portal"></div>
+        <div id="portal-content"></div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Modal -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3 id="modal-title"></h3>
+        <button id="modal-close" class="icon-btn" aria-label="Cerrar">×</button>
+      </div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
