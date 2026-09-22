@@ -125,6 +125,7 @@ datos sintéticos. Si la base ya tiene datos, el seed se omite solo.
 
 | Servicio | URL |
 |---|---|
+| **Interfaz web** | http://localhost:8081 |
 | API | http://localhost:8000 |
 | Swagger | http://localhost:8000/docs |
 | HAPI FHIR | http://localhost:8080/fhir |
@@ -144,6 +145,16 @@ docker compose logs -f api        # seguir el arranque
 docker compose down               # detener
 docker compose down -v            # detener y borrar los datos
 ```
+
+### La interfaz web
+
+El servicio `web` es un contenedor nginx con dos funciones: sirve los archivos
+del front (`frontend/`) y hace de **proxy inverso** hacia la API. Las peticiones
+a `/api`, `/health` y la documentación se reenvían al contenedor `api`.
+
+Por eso el navegador solo habla con un origen: la interfaz y la API lo
+comparten, y no hace falta configurar CORS en el backend. Al publicar, la URL
+del túnel `tunnel-web` da acceso a la aplicación completa.
 
 ### Usar una base de datos gestionada (Neon)
 
