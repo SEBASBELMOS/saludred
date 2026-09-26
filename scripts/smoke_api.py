@@ -159,10 +159,16 @@ orgs = expect_status(
 other_org = next((o["id"] for o in orgs if o["id"] != operator_org), None)
 check("existe otra IPS en la red", other_org is not None)
 
+# Los pacientes se buscan, no se listan: sin criterio la API responde 422.
+expect_status(
+    client.get("/api/v1/patients", headers=operator),
+    422,
+    "listar pacientes sin criterio -> 422",
+)
 patients_page = expect_status(
-    client.get("/api/v1/patients?page_size=1", headers=operator),
+    client.get("/api/v1/patients?document_number=1032450000", headers=operator),
     200,
-    "operador lista pacientes",
+    "operador busca paciente por documento",
 ).json()
 any_patient_id = patients_page["items"][0]["id"]
 
@@ -446,6 +452,97 @@ if RUN_FHIR:
     )
 else:
     print("[SKIP] seccion FHIR (exportar SMOKE_FHIR=1 con HAPI arriba)")
+
+
+# ------------------------------------------------------- bloqueo de cuenta
+# Se ejercita sobre `paciente.demo` y se deja desbloqueada al terminar: la
+# prueba repara lo que rompe, para poder repetirla sin dejar la cuenta caida.
+#
+# Si la corrida se interrumpe entre el bloqueo y el desbloqueo, la cuenta
+# queda caida. Se recupera con:
+#   POST /api/v1/admin/users/{id}/unlock   (con el token de admin)
+# La lista de bloqueadas esta en GET /api/v1/admin/users?only_locked=true
+print()
+print("--- bloqueo tras intentos fallidos ---")
+
+VICTIMA = "paciente.demo"
+for intento in range(1, 3):
+    expect_status(
+        client.post(
+            "/api/v1/auth/login", json={"username": VICTIMA, "password": "malaclave"}
+        ),
+        401,
+        f"intento fallido {intento} -> 401",
+    )
+
+# El tercero cruza el limite: la respuesta cambia a 423 Locked. Distinguirlo
+# del 401 es deliberado -- la persona legitima necesita saber por que no entra
+# y a quien pedirle el desbloqueo.
+expect_status(
+    client.post(
+        "/api/v1/auth/login", json={"username": VICTIMA, "password": "malaclave"}
+    ),
+    423,
+    "tercer intento fallido -> 423 Locked",
+)
+
+# Y ahora lo importante: ni con la clave correcta entra. Comprobar la clave
+# antes del bloqueo revelaria si era la buena, que es justo la confirmacion
+# que busca quien prueba credenciales robadas.
+expect_status(
+    client.post("/api/v1/auth/login", json={"username": VICTIMA, "password": PASSWORD}),
+    423,
+    "cuenta bloqueada rechaza incluso la clave correcta -> 423",
+)
+
+bloqueados = as_json(
+    expect_status(
+        client.get("/api/v1/admin/users?only_locked=true", headers=admin),
+        200,
+        "admin lista cuentas bloqueadas",
+    )
+)
+check(
+    "la cuenta aparece en la lista de bloqueadas",
+    any(u["username"] == VICTIMA for u in bloqueados.get("items", [])),
+)
+
+victima_id = next(
+    (u["id"] for u in bloqueados.get("items", []) if u["username"] == VICTIMA), None
+)
+
+expect_status(
+    client.get("/api/v1/admin/users", headers=operator),
+    403,
+    "operador en endpoint de cuentas -> 403",
+)
+
+if victima_id:
+    expect_status(
+        client.post(
+            f"/api/v1/admin/users/{victima_id}/unlock",
+            headers=operator,
+            json={"reason": "no deberia poder"},
+        ),
+        403,
+        "operador intenta desbloquear -> 403",
+    )
+    expect_status(
+        client.post(
+            f"/api/v1/admin/users/{victima_id}/unlock",
+            headers=admin,
+            json={"reason": "smoke test"},
+        ),
+        200,
+        "admin desbloquea la cuenta",
+    )
+    expect_status(
+        client.post(
+            "/api/v1/auth/login", json={"username": VICTIMA, "password": PASSWORD}
+        ),
+        200,
+        "tras el desbloqueo la cuenta vuelve a entrar",
+    )
 
 # ------------------------------------------------------------------ result
 print()
