@@ -10,12 +10,15 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.error_handlers import register_error_handlers
 from app.api.routes import (
+    accounts,
+    analytics,
     audit,
     auth,
     beds,
     integration,
     encounters,
     health,
+    imaging,
     me,
     observations,
     organizations,
@@ -58,7 +61,10 @@ app.include_router(observations.router)
 app.include_router(organizations.router)
 app.include_router(me.router)
 app.include_router(audit.router)
+app.include_router(accounts.router)
+app.include_router(analytics.router)
 app.include_router(beds.router)
+app.include_router(imaging.router)
 app.include_router(integration.router)
 
 # The web UI (frontend/) is served from the same origin as the API, so one

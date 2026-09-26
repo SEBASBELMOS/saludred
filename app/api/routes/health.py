@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.database import engine
+from app.services import pacs
 
 router = APIRouter(tags=["operacion"])
 
@@ -32,3 +33,19 @@ def health_db() -> dict[str, str]:
     except Exception as exc:  # noqa: BLE001 - surfaced verbatim for diagnosis
         return {"status": "error", "detail": str(exc)}
     return {"status": "ok"}
+
+
+@router.get("/health/pacs", summary="Conectividad con el servidor de imagenes")
+def health_pacs() -> dict[str, str]:
+    """Readiness probe for the PACS.
+
+    Kept apart from ``/health`` on purpose: the clinical record must remain
+    usable when the imaging server is down, so its availability is reported
+    rather than allowed to fail the whole service.
+    """
+
+    status = pacs.system_status()
+    return {
+        "status": "ok" if status.available else "error",
+        "detail": status.detail,
+    }

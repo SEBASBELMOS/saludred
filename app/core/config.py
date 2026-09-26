@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     fhir_identifier_system: str = "urn:saludred:identifier"
     fhir_request_timeout_seconds: int = 30
 
+    # PACS (Orthanc). Solo la API lo conoce: el navegador nunca le habla, de
+    # modo que todo acceso a una imagen pasa antes por el token y por el rol,
+    # y queda registrado en la bitacora de auditoria.
+    orthanc_url: str = "http://localhost:8042"
+    orthanc_user: str = "api"
+    # Sin valor por defecto: si falta, el PACS se reporta como no configurado
+    # en lugar de arrancar con una clave conocida escrita en el codigo.
+    orthanc_password: str | None = None
+    orthanc_timeout_seconds: int = 15
+
     # Seeding
     seed_default_password: str = "Demo2026!"
 

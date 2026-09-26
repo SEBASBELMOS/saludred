@@ -4,6 +4,11 @@
 # aplicacion, la API, el servidor HAPI FHIR y la base de datos propia de HAPI.
 # No hace falta instalar Python ni dependencias en la maquina anfitriona.
 #
+# El PACS (Orthanc) queda en el perfil "pacs" y no arranca por defecto: es
+# un servicio pesado y solo se necesita al trabajar con imagenes.
+#
+#     docker compose --profile pacs up -d orthanc
+#
 # El servidor FHIR conserva su propia base de datos, separada de la de la
 # aplicacion. Son dos sistemas con ciclos de vida distintos: la aplicacion es
 # dueña del modelo operativo, HAPI es dueño de la representacion interoperable.
@@ -45,6 +50,11 @@ services:
       # contenedor `db` queda sin uso.
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://saludred:saludred@db:5432/saludred}
       FHIR_BASE_URL: ${FHIR_BASE_URL:-http://hapi:8080/fhir}
+      # La API es el unico que habla con el PACS, por nombre de servicio
+      # dentro de la red de Docker.
+      ORTHANC_URL: ${ORTHANC_URL:-http://orthanc:8042}
+      ORTHANC_USER: ${ORTHANC_USER:-api}
+      ORTHANC_PASSWORD: ${ORTHANC_PASSWORD:-orthanc_dev_2026}
       SEED_ON_START: ${SEED_ON_START:-true}
     ports:
       - "8000:8000"
@@ -77,6 +87,41 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+    restart: unless-stopped
+
+  orthanc:
+    # Servidor PACS: aqui viven los pixeles de las imagenes medicas. La base
+    # de datos guarda solo los metadatos del estudio, porque PostgreSQL es un
+    # mal lugar para binarios de decenas de megabytes y un PACS ya sabe
+    # indexar por paciente, estudio, serie e instancia.
+    #
+    # Tres decisiones de seguridad:
+    #
+    # 1. Orthanc vive dentro de la red de Docker. El navegador NUNCA le habla:
+    #    toda imagen se pide a la API, que primero valida el token y el rol.
+    #    Orthanc no conoce nuestros roles ni escribe en nuestro audit_log, asi
+    #    que exponerlo romperia el control de acceso y la trazabilidad que
+    #    exige la Ley 1581 de 2012.
+    # 2. Aun asi se activa su propia autenticacion. Defensa en profundidad: si
+    #    alguien alcanzara el puerto, no entra sin credenciales.
+    # 3. El puerto 8042 se publica solo en 127.0.0.1, para poder inspeccionarlo
+    #    durante el desarrollo. En un despliegue real esa linea se elimina.
+    #    El puerto DICOM 4242 no se publica: hoy las imagenes entran por la
+    #    API, no por equipos de imagenologia.
+    image: orthancteam/orthanc:25.5.1
+    container_name: saludred-orthanc
+    profiles: ["pacs"]
+    environment:
+      ORTHANC__NAME: "SaludRed PACS"
+      ORTHANC__AUTHENTICATION_ENABLED: "true"
+      ORTHANC__REMOTE_ACCESS_ALLOWED: "true"
+      # JSON valido con comillas dobles: la imagen lo parsea tal cual.
+      ORTHANC__REGISTERED_USERS: |
+        {"${ORTHANC_USER:-api}": "${ORTHANC_PASSWORD:-orthanc_dev_2026}"}
+    ports:
+      - "127.0.0.1:8042:8042"
+    volumes:
+      - saludred-orthanc-data:/var/lib/orthanc/db
     restart: unless-stopped
 
   hapi-db:
@@ -185,3 +230,4 @@ services:
 volumes:
   saludred-db-data:
   saludred-hapi-db-data:
+  saludred-orthanc-data:

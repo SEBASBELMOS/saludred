@@ -15,9 +15,11 @@ from app.core import authz
 from app.models.enums import RoleCode
 from app.models.patient import Patient
 from app.schemas.encounter import EncounterRead
+from app.schemas.imaging import ImagingStudyRead
 from app.schemas.observation import ObservationRead
 from app.schemas.patient import PatientRead
 from app.services import encounters as encounters_service
+from app.services import imaging as imaging_service
 from app.services import observations as observations_service
 from app.services.errors import ConflictError, NotFoundError
 
@@ -56,3 +58,20 @@ def my_observations(db: DbSession, user: CurrentUser) -> list[ObservationRead]:
         db, page=1, page_size=100, patient_id=patient.id
     )
     return items
+
+
+@router.get(
+    "/imaging-studies",
+    response_model=list[ImagingStudyRead],
+    summary="Mis estudios de imagen",
+)
+def my_imaging_studies(db: DbSession, user: CurrentUser) -> list[ImagingStudyRead]:
+    """What the patient sees is the study metadata, not the images.
+
+    Reaching the pixels always goes through the PACS route, which checks the
+    role again and leaves a trace: an image is the most sensitive thing in
+    the record and it is not served from a list endpoint.
+    """
+
+    patient = _own_patient(db, user)
+    return imaging_service.list_for_patient(db, patient.id)
