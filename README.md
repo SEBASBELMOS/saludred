@@ -1,8 +1,9 @@
 # SaludRed — Coordinación de camas hospitalarias en red EPS/IPS
 
 Sistema de gestión y asignación de camas para una EPS que coordina múltiples IPS,
-con base de datos relacional PostgreSQL, API REST y exposición de la información
-clínica como recursos HL7 FHIR R4.
+con base de datos relacional PostgreSQL, API REST, interfaz web por rol,
+analítica de la red y exposición de la información clínica como recursos
+HL7 FHIR R4.
 
 ## El problema
 
@@ -40,16 +41,22 @@ EPS
 ## Arquitectura
 
 ```
+   Navegador ── nginx (web)     ← interfaz + proxy inverso, un solo origen
+                    │
    PostgreSQL (aplicación)      ← fuente de verdad operativa
             │
-        FastAPI                 ← autenticación, RBAC, soft operations
-            │
+        FastAPI                 ← autenticación, RBAC, soft operations, analítica
+            │         └──────── Orthanc (PACS, opcional) ← píxeles de las imágenes
    Servicio de integración      ← mapeo relacional → FHIR R4
             │
       HAPI FHIR R4              ← representación interoperable
             │
    PostgreSQL (HAPI)
 ```
+
+La base de la aplicación guarda los **metadatos** de cada estudio de imagen; los
+píxeles viven en un PACS. El navegador nunca habla con el PACS: toda imagen pasa
+antes por la API, que valida el token y el rol y deja rastro en la auditoría.
 
 El servidor FHIR mantiene su propia base de datos, separada de la base de la
 aplicación. Son dos sistemas con ciclos de vida distintos: la aplicación es
@@ -61,20 +68,22 @@ HAPI.
 
 | Componente | Tecnología |
 |---|---|
-| Base de datos | PostgreSQL 16 (Neon en despliegue) |
+| Base de datos | PostgreSQL (16 en contenedor, Neon en despliegue) |
 | API | Python 3.12 · FastAPI · SQLAlchemy 2 · Pydantic v2 |
 | Migraciones | Alembic |
 | Autenticación | JWT (HS256) · hashing bcrypt |
 | Interoperabilidad | HAPI FHIR R4 |
+| Imágenes médicas | Orthanc (PACS DICOM), perfil opcional |
+| Interfaz | HTML, CSS y JavaScript sin dependencias, servidos por nginx |
 | Documentación de API | OpenAPI/Swagger generado por FastAPI |
 
 ## Modelo de datos
 
-Trece tablas relacionadas por llaves foráneas, agrupadas en cuatro bloques:
+Catorce tablas relacionadas por llaves foráneas, agrupadas en cinco bloques:
 
 **Red y ubicaciones** — `organizations`, `locations`
 **Identidad** — `roles`, `users`
-**Clínico** — `patients`, `encounters`, `observations`
+**Clínico** — `patients`, `encounters`, `observations`, `imaging_studies`
 **Coordinación de camas** — `bed_requests`, `bed_assignments`, `bed_status_events`
 **Trazabilidad** — `record_versions`, `audit_log`, `fhir_sync_log`
 
@@ -91,6 +100,11 @@ Dos decisiones que conviene conocer antes de leer el esquema:
 - **Los códigos que cruzan hacia FHIR se almacenan literales** (`in-progress`,
   `final`, `IMP`). El mapper no traduce vocabularios, y por lo tanto no puede
   desalinearse del estándar.
+- **Las mediciones usan LOINC y UCUM** (qué se midió y en qué unidad), y cada
+  código tiene un rango fisiológicamente plausible para rechazar errores de
+  digitación.
+- **Una cama solo puede tener una asignación activa**, y lo garantiza la base de
+  datos con un índice único parcial, no el código de la aplicación.
 
 ## Roles
 
@@ -103,6 +117,25 @@ Dos decisiones que conviene conocer antes de leer el esquema:
 
 La justificación de cada rol está en
 [`docs/modelo-datos-y-fhir.md`](docs/modelo-datos-y-fhir.md).
+
+## Funcionalidades
+
+| Área | Qué hace |
+|---|---|
+| Capacidad de la red | Estado de cada cama por IPS y por servicio, ocupación y solicitudes en espera |
+| Cola de camas | Ordenada por prioridad clínica (Emergencia, Urgente, Rutina) y, a igual prioridad, por tiempo de espera |
+| Asignación | Solo coordinación EPS o administración. Saltar el orden de la cola exige un motivo que queda auditado |
+| Estado de camas | Una cama liberada pasa a limpieza, nunca directo a disponible. Una cama ocupada no se libera cambiando su estado a mano |
+| Pacientes | Se **buscan, no se listan**: por documento exacto (6 caracteres o más) o por nombre (3 letras o más), con un máximo de 10 resultados. Registro, edición con historial y ficha con signos vitales, atenciones y estudios de imagen |
+| Atenciones y mediciones | Registro de una atención con sus signos vitales. Para los códigos LOINC del catálogo, la API fija el nombre y la unidad UCUM y rechaza valores fuera del rango fisiológicamente plausible |
+| Bloqueo de cuentas | Al tercer intento fallido la cuenta se bloquea (HTTP 423) y solo la administración la desbloquea, con motivo |
+| Cuentas | La administración crea las cuentas (operador de IPS, coordinador de EPS, administrador o portal de paciente vinculado a su ficha) y ve la actividad reciente de la auditoría |
+| Analítica | Espera por prioridad (mediana y percentil 90), tiempo de alistamiento de camas, cohortes por perfil clínico, ingresos y egresos, y recomendación de a qué IPS enviar al próximo paciente |
+| Agrupamiento | k-means sobre signos vitales, IMC y edad. El número de grupos se elige por coeficiente de silueta y el resultado se califica contra el perfil clínico con el índice de Rand ajustado |
+| Interoperabilidad | Sincronización idempotente de pacientes, encuentros, observaciones, organizaciones y camas hacia FHIR R4 |
+
+Todas las reglas se aplican en la API. La interfaz solo oculta las acciones que
+un rol no puede hacer; si una se intenta de todos modos, la respuesta es `403`.
 
 ## Puesta en marcha
 
@@ -169,7 +202,7 @@ cambiando el prefijo `postgresql://` por `postgresql+psycopg://` y conservando
 docker compose --profile public up -d
 ```
 
-Eso levanta dos túneles de Cloudflare —uno para la API y otro para el servidor
+Eso levanta tres túneles de Cloudflare —la interfaz web, la API y el servidor
 FHIR— que devuelven URLs públicas `https://...trycloudflare.com`. No se abre
 ningún puerto en el router: el túnel establece una conexión saliente.
 
@@ -185,6 +218,26 @@ powershell -ExecutionPolicy Bypass -File .\deploy\urls-publicas.ps1
 
 El servidor FHIR sirve bajo la ruta `/fhir`, así que su CapabilityStatement
 queda en `<URL de FHIR>/fhir/metadata`.
+
+### PACS de imágenes (opcional)
+
+```bash
+docker compose --profile pacs up -d orthanc
+```
+
+Orthanc queda solo dentro de la red de Docker, con autenticación propia y el
+puerto 8042 publicado únicamente en `127.0.0.1`. Su estado se consulta en
+`GET /health/pacs`; si está apagado, la historia clínica sigue funcionando.
+
+| Ruta | Qué hace |
+|---|---|
+| `POST /api/v1/imaging-studies/{id}/images` | Sube el archivo como cuerpo de la petición (DICOM, PNG o JPEG) al estudio ya registrado |
+| `GET /api/v1/imaging-studies/{id}/images` | Lista las imágenes del estudio en el PACS |
+| `GET /api/v1/imaging/instances/{id}/preview` | Vista previa PNG, con la misma regla de acceso que la ficha |
+
+Cada imagen se guarda con el documento del paciente como `PatientID` y con el
+`StudyInstanceUID` del estudio de nuestra base, que es lo que une los dos
+sistemas.
 
 > Las URLs de este tipo de túnel **cambian cada vez que el contenedor se
 > reinicia**. Se generan cuando se van a usar y se comparten en ese momento.
@@ -221,7 +274,7 @@ Los tres comandos se ejecutan dentro del contenedor de la API, donde ya están
 todas las dependencias instaladas:
 
 ```bash
-docker compose exec api pytest                       # pruebas unitarias (sin base de datos)
+docker compose exec api pytest                       # pruebas (SQLite en memoria, sin tocar la base real)
 docker compose exec api python -m scripts.demo_join  # consulta JOIN de validación del modelo
 docker compose exec api python -m scripts.smoke_api  # prueba end-to-end de la API
 
@@ -232,9 +285,32 @@ docker compose exec -e SMOKE_FHIR=1 api python -m scripts.smoke_api
 ## Datos
 
 Todos los datos son **sintéticos**. El sistema no procesa información clínica
-real de ninguna persona. El generador usa una semilla fija, de modo que dos
-ejecuciones producen exactamente el mismo conjunto de datos y una demostración
-preparada no cambia entre ensayos.
+real de ninguna persona.
+
+```bash
+docker compose exec api python -m scripts.seed --reset                 # 16 pacientes para la demo
+docker compose exec api python -m scripts.seed --reset --patients 400  # volumen para análisis
+```
+
+`--reset` borra todo el contenido de la base antes de cargar.
+
+El generador no reparte valores al azar dentro de un rango. Cada paciente tiene
+un **perfil clínico** (sin comorbilidad, hipertensión, diabetes, cardiopatía,
+enfermedad respiratoria o adulto mayor frágil) que determina sus signos vitales,
+su prioridad al llegar, su estadía y los estudios de imagen que se le piden. Las
+relaciones se respetan por construcción: la presión diastólica se deriva de la
+sistólica y el peso sale de la talla y el IMC. Los perfiles se solapan en los
+bordes a propósito, para que agrupar sea un problema real.
+
+Las camas no se llenan al azar: se simula la red en el tiempo. Cada solicitud
+espera en una cola de prioridad por IPS; cuando una cama termina su limpieza, se
+la lleva la solicitud más urgente, que es la misma regla que aplica la API. La
+red se dimensiona para operar cerca del 85 % de ocupación, de modo que la
+escasez y la cola que resultan son consecuencia de la simulación.
+
+Cada paciente usa su propia semilla: agrandar el conjunto no cambia a los
+pacientes que ya existían, y dos ejecuciones producen exactamente los mismos
+datos.
 
 ## Seguridad
 
@@ -242,14 +318,20 @@ preparada no cambia entre ensayos.
   control de versiones y `.env.example` documenta la forma de la configuración
   sin contener ningún valor real.
 - Las contraseñas se almacenan con bcrypt, nunca en texto plano.
-- La autorización se resuelve en el backend por rol y por pertenencia del
-  registro. Un endpoint no se protege ocultándolo.
+- La autorización se resuelve en el backend por rol, por institución y por
+  pertenencia del registro. Un endpoint no se protege ocultándolo.
+- Tres intentos fallidos bloquean la cuenta. Una cuenta bloqueada se rechaza
+  **antes** de verificar la contraseña, para no confirmar si era la correcta; un
+  usuario inexistente recibe la misma respuesta que una contraseña incorrecta.
+  Cada intento, bloqueo y desbloqueo queda en la auditoría.
 
 ## Estado
 
-Prototipo académico funcional. No implementa OAuth2/SMART on FHIR, analítica
-predictiva ni optimización de asignación; esas quedan como extensiones
-posteriores.
+Prototipo académico funcional. La carga y visualización de imágenes en el PACS
+existe como borrador: sube DICOM, PNG o JPEG a Orthanc a través de la API y
+muestra una vista previa de 8 bits. Queda pendiente definir su alcance final.
+No implementa OAuth2/SMART on FHIR, analítica predictiva ni optimización
+automática de la asignación; esas quedan como extensiones posteriores.
 
 ## Licencia
 
