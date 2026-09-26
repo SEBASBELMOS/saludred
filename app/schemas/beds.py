@@ -128,6 +128,7 @@ class QueuedBedRequest(BedRequestRead):
     """A pending request as it appears in the priority queue."""
 
     queue_position: int = Field(description="1 es la siguiente en ser atendida")
+    patient_id: uuid.UUID
     patient_name: str
     patient_document: str
     waiting_minutes: int

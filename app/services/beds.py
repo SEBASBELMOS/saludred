@@ -110,11 +110,17 @@ def organization_capacity(
     for bed in beds:
         servicios.setdefault(bed.service or "(sin servicio)", []).append(bed)
 
+    # Una solicitud nace sin destino: solo lo recibe cuando el coordinador la
+    # ubica. Contar solo por destino daba cero en espera para todas las IPS.
+    # Mientras no tenga destino, la cola pesa sobre la institucion que la pidio.
     pendientes = db.scalar(
         select(func.count())
         .select_from(BedRequest)
         .where(
-            BedRequest.target_organization_id == organization.id,
+            func.coalesce(
+                BedRequest.target_organization_id,
+                BedRequest.requesting_organization_id,
+            ) == organization.id,
             BedRequest.status.in_(OPEN_STATUSES),
             BedRequest.deleted_at.is_(None),
         )
@@ -292,7 +298,12 @@ def list_queue(
 
     cola: list[dict[str, object]] = []
     for posicion, (solicitud, paciente, _encuentro) in enumerate(filas, start=1):
-        espera = ahora - solicitud.requested_at
+        pedida = solicitud.requested_at
+        # PostgreSQL devuelve timestamptz con zona; SQLite, que es donde corren
+        # las pruebas, la pierde. Una fecha sin zona en esta columna es UTC.
+        if pedida.tzinfo is None:
+            pedida = pedida.replace(tzinfo=timezone.utc)
+        espera = ahora - pedida
         cola.append(
             {
                 "id": solicitud.id,
@@ -306,6 +317,7 @@ def list_queue(
                 "requested_at": solicitud.requested_at,
                 "resolved_at": solicitud.resolved_at,
                 "queue_position": posicion,
+                "patient_id": paciente.id,
                 "patient_name": paciente.full_name,
                 "patient_document": paciente.business_identifier,
                 "waiting_minutes": int(espera.total_seconds() // 60),
@@ -503,6 +515,25 @@ def assign_bed(
     return asignacion
 
 
+def active_assignment_for_bed(db: Session, location_id: uuid.UUID) -> BedAssignment:
+    """The assignment currently holding a bed.
+
+    El indice parcial garantiza que hay a lo sumo una, asi que no hace falta
+    elegir entre varias.
+    """
+
+    asignacion = db.scalar(
+        select(BedAssignment).where(
+            BedAssignment.location_id == location_id,
+            BedAssignment.status == BedAssignmentStatus.ACTIVE,
+            BedAssignment.deleted_at.is_(None),
+        )
+    )
+    if asignacion is None:
+        raise ConflictError("La cama no tiene una asignacion activa que liberar")
+    return asignacion
+
+
 def release_bed(
     db: Session, asignacion: BedAssignment, *, actor: User, reason: str | None = None
 ) -> BedAssignment:
@@ -564,6 +595,14 @@ def change_bed_status(
     if new_status == BedStatus.OCCUPIED:
         raise ConflictError(
             "Una cama se ocupa asignando una solicitud, no cambiando su estado"
+        )
+    if cama.status == BedStatus.OCCUPIED:
+        # Simetrico al caso anterior: una cama ocupada tiene una asignacion
+        # activa detras. Cambiarle el estado a mano dejaria esa asignacion
+        # abierta, con un paciente "en" una cama que el tablero muestra libre,
+        # y la siguiente asignacion la duplicaria.
+        raise ConflictError(
+            "Una cama ocupada se desocupa liberando su asignacion, no cambiando su estado"
         )
 
     anterior = cama.status

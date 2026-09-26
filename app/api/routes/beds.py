@@ -38,6 +38,7 @@ from app.schemas.beds import (
     QueuedBedRequest,
 )
 from app.services import beds as beds_service
+from app.services import encounters as encounters_service
 from app.services import organizations as organizations_service
 from app.services.errors import NotFoundError
 
@@ -119,6 +120,11 @@ def create_bed_request(
     db: DbSession, user: CurrentUser, payload: BedRequestCreate
 ) -> BedRequestRead:
     authz.require_role(user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR)
+    # La institucion que pide es la del encuentro. Sin esta comprobacion, un
+    # operador podria abrir una solicitud sobre un encuentro de otra IPS y
+    # pedir cama a nombre de ella.
+    encuentro = encounters_service.get_encounter(db, payload.encounter_id)
+    authz.ensure_org_scope(user, encuentro.organization_id)
     return beds_service.create_bed_request(db, payload, actor=user)
 
 
@@ -218,6 +224,28 @@ def release_bed(
     if asignacion is None or asignacion.deleted_at is not None:
         raise NotFoundError("Asignacion no encontrada")
     authz.ensure_org_scope(user, asignacion.location.organization_id)
+    return beds_service.release_bed(db, asignacion, actor=user)
+
+
+@router.post(
+    "/beds/{location_id}/release",
+    response_model=BedAssignmentRead,
+    summary="Liberar la cama por su identificador",
+)
+def release_bed_by_location(
+    db: DbSession, user: CurrentUser, location_id: uuid.UUID
+) -> BedAssignmentRead:
+    """Libera la asignacion activa de una cama.
+
+    Es la misma operacion que liberar por asignacion, pero la interfaz parte
+    de la cama que ve en el tablero, no de un identificador de asignacion que
+    no tiene a mano. La cama pasa a limpieza, igual que por la otra ruta.
+    """
+
+    authz.require_role(user, RoleCode.ADMIN, RoleCode.EPS_COORDINATOR)
+    cama = _bed_or_404(db, location_id)
+    authz.ensure_org_scope(user, cama.organization_id)
+    asignacion = beds_service.active_assignment_for_bed(db, cama.id)
     return beds_service.release_bed(db, asignacion, actor=user)
 
 
