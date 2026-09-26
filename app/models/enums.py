@@ -119,10 +119,53 @@ class BedAssignmentStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+class ImagingModality(str, Enum):
+    """DICOM modality codes.
+
+    Los valores son los del estandar DICOM, no nombres propios: un visor o un
+    PACS de otro proveedor los reconoce sin traduccion.
+    """
+
+    CR = "CR"  # Radiografia computarizada
+    DX = "DX"  # Radiografia digital
+    CT = "CT"  # Tomografia computarizada
+    MR = "MR"  # Resonancia magnetica
+    US = "US"  # Ecografia
+    XA = "XA"  # Angiografia
+    NM = "NM"  # Medicina nuclear
+
+
+class ImagingStudyStatus(str, Enum):
+    """FHIR R4 imagingstudy-status value set."""
+
+    REGISTERED = "registered"
+    AVAILABLE = "available"
+    CANCELLED = "cancelled"
+
+
+class ClinicalProfile(str, Enum):
+    """Perfil clinico estable de un paciente sintetico.
+
+    No es un diagnostico: es la etiqueta que usa el generador para producir
+    signos vitales coherentes entre si, y la variable que despues permite
+    agrupar pacientes y comparar cohortes.
+    """
+
+    HEALTHY = "HEALTHY"
+    HYPERTENSIVE = "HYPERTENSIVE"
+    DIABETIC = "DIABETIC"
+    CARDIAC = "CARDIAC"
+    RESPIRATORY = "RESPIRATORY"
+    ELDERLY_FRAIL = "ELDERLY_FRAIL"
+
+
 class AuditAction(str, Enum):
     """Actions recorded in audit_log. The last three are required by the spec."""
 
     LOGIN = "LOGIN"
+    LOGIN_FAILED = "LOGIN_FAILED"
+    ACCOUNT_LOCKED = "ACCOUNT_LOCKED"
+    ACCOUNT_UNLOCKED = "ACCOUNT_UNLOCKED"
     CREATE = "CREATE"
     SOFT_EDIT = "SOFT_EDIT"
     SOFT_DELETE = "SOFT_DELETE"

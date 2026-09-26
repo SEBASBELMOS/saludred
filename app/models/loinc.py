@@ -31,6 +31,9 @@ DIASTOLIC_BP = LoincCode("8462-4", "Diastolic blood pressure", "mm[Hg]", 55, 100
 OXYGEN_SATURATION = LoincCode(
     "59408-5", "Oxygen saturation in Arterial blood by Pulse oximetry", "%", 88, 100
 )
+BODY_WEIGHT = LoincCode("29463-7", "Body weight", "kg", 45, 110)
+BODY_HEIGHT = LoincCode("8302-2", "Body height", "cm", 148, 190)
+GLUCOSE = LoincCode("2339-0", "Glucose [Mass/volume] in Blood", "mg/dL", 70, 260)
 
 VITAL_SIGNS: tuple[LoincCode, ...] = (
     HEART_RATE,
@@ -39,6 +42,25 @@ VITAL_SIGNS: tuple[LoincCode, ...] = (
     SYSTOLIC_BP,
     DIASTOLIC_BP,
     OXYGEN_SATURATION,
+    BODY_WEIGHT,
+    BODY_HEIGHT,
+    GLUCOSE,
 )
 
 BY_CODE: dict[str, LoincCode] = {item.code: item for item in VITAL_SIGNS}
+
+# ``low``/``high`` acotan lo que *genera* el seed. Estos otros limites acotan
+# lo que *acepta* la API: son los extremos que puede tener una persona viva.
+# Un valor fuera de este rango no es un paciente grave, es un error de
+# digitacion, y conviene rechazarlo antes de que contamine una estadistica.
+PLAUSIBLE_RANGE: dict[str, tuple[float, float]] = {
+    HEART_RATE.code: (30, 220),
+    RESPIRATORY_RATE.code: (6, 60),
+    BODY_TEMPERATURE.code: (32, 42),
+    SYSTOLIC_BP.code: (50, 260),
+    DIASTOLIC_BP.code: (30, 150),
+    OXYGEN_SATURATION.code: (50, 100),
+    BODY_WEIGHT.code: (1, 400),
+    BODY_HEIGHT.code: (30, 250),
+    GLUCOSE.code: (20, 800),
+}

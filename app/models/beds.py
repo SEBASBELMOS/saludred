@@ -115,7 +115,14 @@ class BedAssignment(
             "uq_bed_assignments_one_active_per_bed",
             "location_id",
             unique=True,
+            # Partial index: a bed may be assigned many times over its life,
+            # but only one of those assignments can be active at a time. A
+            # plain UNIQUE would forbid ever reusing a bed.
             postgresql_where=text("status = 'ACTIVE' AND deleted_at IS NULL"),
+            # Same rule for SQLite, which is what the test suite builds the
+            # schema on. Without it the index degrades to a full UNIQUE and
+            # the tests would enforce a constraint production does not have.
+            sqlite_where=text("status = 'ACTIVE' AND deleted_at IS NULL"),
         ),
     )
 

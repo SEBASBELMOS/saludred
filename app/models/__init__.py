@@ -10,6 +10,7 @@ from app.models.beds import BedAssignment, BedRequest, BedStatusEvent
 from app.models.clinical import Encounter, Observation
 from app.models.governance import AuditLog, FhirSyncLog, RecordVersion
 from app.models.identity import Role, User
+from app.models.imaging import ImagingStudy
 from app.models.organization import Location, Organization
 from app.models.patient import Patient
 
@@ -21,6 +22,7 @@ __all__ = [
     "BedStatusEvent",
     "Encounter",
     "FhirSyncLog",
+    "ImagingStudy",
     "Location",
     "Observation",
     "Organization",

@@ -15,11 +15,17 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDPrimaryKeyMixin
 from app.models.enums import AuditAction, SyncStatus, enum_column
+
+# Postgres is the production engine and JSONB is what it should use: it is
+# indexable and stored already parsed. The SQLite variant exists only so the
+# schema can be built in memory for tests; it changes nothing on Postgres.
+JSON_COLUMN = JSONB().with_variant(JSON(), "sqlite")
 
 
 class RecordVersion(UUIDPrimaryKeyMixin, Base):
@@ -40,8 +46,8 @@ class RecordVersion(UUIDPrimaryKeyMixin, Base):
     entity_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     entity_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    changed_fields: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_COLUMN, nullable=False)
+    changed_fields: Mapped[list[str] | None] = mapped_column(JSON_COLUMN, nullable=True)
     changed_by: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
@@ -72,7 +78,7 @@ class AuditLog(UUIDPrimaryKeyMixin, Base):
     entity_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), nullable=True, index=True
     )
-    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON_COLUMN, nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
@@ -111,7 +117,7 @@ class FhirSyncLog(UUIDPrimaryKeyMixin, Base):
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    last_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    last_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON_COLUMN, nullable=True)
 
     def __repr__(self) -> str:
         return f"<FhirSyncLog {self.fhir_resource_type}:{self.fhir_resource_id}>"

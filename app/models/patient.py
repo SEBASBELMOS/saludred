@@ -16,7 +16,12 @@ from app.models.base import (
     TimestampMixin,
     UUIDPrimaryKeyMixin,
 )
-from app.models.enums import AdministrativeGender, DocumentType, enum_column
+from app.models.enums import (
+    AdministrativeGender,
+    ClinicalProfile,
+    DocumentType,
+    enum_column,
+)
 
 if TYPE_CHECKING:
     from app.models.clinical import Encounter, Observation
@@ -53,6 +58,16 @@ class Patient(
     phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     address: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    # Perfil clinico de referencia.
+    #
+    # En los datos sinteticos es la etiqueta con la que el generador produce
+    # signos vitales coherentes, y sirve de verdad conocida para evaluar si un
+    # agrupamiento automatico descubre las mismas cohortes. En un sistema real
+    # equivaldria a una categoria de riesgo asignada por el equipo clinico.
+    clinical_profile: Mapped[ClinicalProfile | None] = mapped_column(
+        enum_column(ClinicalProfile, "clinical_profile"), nullable=True, index=True
+    )
 
     eps_organization_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),

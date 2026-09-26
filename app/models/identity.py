@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Uuid
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -63,6 +63,21 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # Bloqueo por intentos fallidos.
+    #
+    # El contador se guarda en la fila del usuario, no en memoria del proceso:
+    # un reinicio de la API no debe regalarle intentos a quien esta probando
+    # claves, y con varias replicas el conteo tiene que ser el mismo para todas.
+    failed_login_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # Fecha del bloqueo. Nula significa cuenta operativa. No hay vencimiento
+    # automatico: desbloquear es una decision del administrador, que queda
+    # auditada, y no algo que el tiempo resuelva solo.
+    locked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     role_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False, index=True
     )
@@ -90,6 +105,12 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     @property
     def role_code(self) -> RoleCode:
         return self.role.code
+
+    @property
+    def is_locked(self) -> bool:
+        """Una cuenta bloqueada no puede autenticarse hasta que un admin la libere."""
+
+        return self.locked_at is not None
 
     def __repr__(self) -> str:
         return f"<User {self.username}>"
