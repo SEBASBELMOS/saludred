@@ -9,7 +9,9 @@ from app.services.errors import (
     ConflictError,
     FhirGatewayError,
     ForbiddenError,
+    InvalidValueError,
     NotFoundError,
+    PacsUnavailableError,
 )
 
 
@@ -33,3 +35,11 @@ def register_error_handlers(app: FastAPI) -> None:
         request: Request, exc: FhirGatewayError
     ) -> JSONResponse:
         return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+    @app.exception_handler(PacsUnavailableError)
+    async def pacs_handler(request: Request, exc: PacsUnavailableError) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    @app.exception_handler(InvalidValueError)
+    async def invalid_value_handler(request: Request, exc: InvalidValueError) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})

@@ -7,7 +7,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.enums import AdministrativeGender, DocumentType
+from app.models.enums import AdministrativeGender, ClinicalProfile, DocumentType
 
 
 class PatientBase(BaseModel):
@@ -74,5 +74,12 @@ class PatientRead(PatientBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    # Solo lectura: lo asigna el generador de datos sinteticos y sirve como
+    # referencia para validar agrupamientos. No se acepta al crear ni al
+    # editar, porque no es un dato que registre el personal clinico.
+    clinical_profile: ClinicalProfile | None = None
+    # Quien registro al paciente. La API decide si alguien puede editarlo; la
+    # pantalla lo usa solo para no ofrecer un boton que terminaria en 403.
+    created_by: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime

@@ -26,6 +26,25 @@ class FhirGatewayError(ServiceError):
     """The FHIR server could not be reached or rejected the request."""
 
 
+class PacsUnavailableError(ServiceError):
+    """The PACS could not be reached or failed.
+
+    Mapped to 503 and kept apart from the clinical record on purpose: an
+    imaging server that is down must not take the medical history with it.
+    """
+
+
+class InvalidValueError(ServiceError):
+    """A value the server refuses to store: out of range, missing criteria.
+
+    Mapped to 422, the same status FastAPI uses for malformed bodies.
+    """
+
+
+class InvalidUploadError(InvalidValueError):
+    """An uploaded file is not an accepted, well-formed image."""
+
+
 def commit(db: Session) -> None:
     """Commit, translating database-level integrity violations into 409s.
 

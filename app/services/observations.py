@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.models.clinical import Encounter, Observation
 from app.models.identity import User
+from app.models.loinc import BY_CODE, PLAUSIBLE_RANGE
 from app.schemas.observation import ObservationCreate, ObservationUpdate
 from app.services import soft_ops
-from app.services.errors import ConflictError, NotFoundError, commit
+from app.services.errors import ConflictError, InvalidValueError, NotFoundError, commit
 from app.services.encounters import get_encounter, require_patient
 
 
@@ -80,6 +81,7 @@ def create_observation(
     get_encounter(db, data.encounter_id)
 
     observation = Observation(**data.model_dump(), created_by=actor.id)
+    _apply_catalog(observation)
     db.add(observation)
     db.flush()
     soft_ops.audit_create(db, observation, actor=actor)
@@ -108,6 +110,7 @@ def update_observation(
     observation.updated_by = actor.id
 
     _normalize_value(observation)
+    _apply_catalog(observation)
     commit(db)
     db.refresh(observation)
     return observation
@@ -117,6 +120,35 @@ def soft_delete_observation(
     db: Session, observation: Observation, *, actor: User
 ) -> None:
     soft_ops.soft_delete(db, observation, actor=actor)
+
+
+def _apply_catalog(observation: Observation) -> None:
+    """For codes in the vital-signs catalogue, the server has the last word.
+
+    El nombre y la unidad salen del catalogo, no de lo que envie el cliente: una
+    frecuencia cardiaca en "latidos" en un registro y en "/min" en otro dejaria
+    de ser comparable. Y el valor debe estar dentro del rango fisiologicamente
+    plausible: fuera de el no es un paciente grave, es un error de digitacion,
+    y conviene rechazarlo antes de que contamine una estadistica.
+
+    Codes outside the catalogue are stored as sent.
+    """
+
+    vital = BY_CODE.get(observation.code)
+    if vital is None:
+        return
+    observation.code_system = "http://loinc.org"
+    observation.display = vital.display
+    observation.unit = vital.unit
+    observation.unit_system = "http://unitsofmeasure.org"
+    if observation.value_numeric is not None:
+        low, high = PLAUSIBLE_RANGE[observation.code]
+        value = float(observation.value_numeric)
+        if not low <= value <= high:
+            raise InvalidValueError(
+                f"{vital.display} ({observation.code}): {value:g} {vital.unit} esta fuera del "
+                f"rango plausible {low:g}-{high:g}. Revise el valor."
+            )
 
 
 def _normalize_value(observation: Observation) -> None:

@@ -26,9 +26,14 @@ from app.schemas.audit import RecordVersionRead
 from app.schemas.common import Page
 from app.schemas.patient import PatientCreate, PatientRead, PatientUpdate
 from app.services import patients as patients_service
+from app.services.errors import InvalidValueError
 from app.services import soft_ops
 
 router = APIRouter(prefix="/api/v1/patients", tags=["pacientes"])
+
+MAX_SEARCH_RESULTS = 10
+MIN_DOCUMENT_CHARS = 6
+MIN_NAME_CHARS = 3
 
 
 @router.get("", response_model=Page[PatientRead], summary="Listar pacientes")
@@ -40,7 +45,7 @@ def list_patients(
         default=None, description="Filtro exacto por numero de documento"
     ),
     name: str | None = Query(
-        default=None, description="Filtro parcial por nombre o apellido"
+        default=None, description="Filtro parcial por nombre o apellido (3 letras o mas)"
     ),
     include_deleted: bool = Query(
         default=False,
@@ -50,15 +55,30 @@ def list_patients(
     authz.require_staff(user)
     if include_deleted:
         authz.require_admin(user)
+    # Busqueda, nunca listado: la historia clinica no se hojea. Sin un criterio
+    # no se devuelve a nadie, y como mucho diez coincidencias. Se aplica aqui y
+    # no solo en la pantalla, porque ocultar algo en el navegador es cortesia,
+    # no seguridad.
+    document_number = (document_number or "").strip() or None
+    name = (name or "").strip() or None
+    if not document_number and not name:
+        raise InvalidValueError(
+            "Busque por numero de documento o por nombre: no se listan pacientes sin un criterio"
+        )
+    if document_number and len(document_number) < MIN_DOCUMENT_CHARS:
+        raise InvalidValueError(f"El documento debe tener al menos {MIN_DOCUMENT_CHARS} caracteres")
+    if name and len(name) < MIN_NAME_CHARS:
+        raise InvalidValueError(f"Escriba al menos {MIN_NAME_CHARS} letras del nombre o apellido")
+    page_size = min(params.page_size, MAX_SEARCH_RESULTS)
     items, total = patients_service.list_patients(
         db,
         page=params.page,
-        page_size=params.page_size,
+        page_size=page_size,
         document_number=document_number,
         name=name,
         include_deleted=include_deleted,
     )
-    return Page(items=items, total=total, page=params.page, page_size=params.page_size)
+    return Page(items=items, total=total, page=params.page, page_size=page_size)
 
 
 @router.post(
