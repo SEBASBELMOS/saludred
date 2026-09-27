@@ -137,6 +137,25 @@ La justificación de cada rol está en
 Todas las reglas se aplican en la API. La interfaz solo oculta las acciones que
 un rol no puede hacer; si una se intenta de todos modos, la respuesta es `403`.
 
+## Capturas
+
+Todas las pantallas usan datos sintéticos: no hay información de ninguna persona real.
+
+| | |
+|---|---|
+| ![Inicio de sesión](docs/capturas/01-inicio-sesion.png) | ![Resumen de la red](docs/capturas/02-resumen-red.png) |
+| **Inicio de sesión**, con el aviso de privacidad de la Ley 1581 de 2012 | **Resumen de la red**: camas por IPS (una marca, una cama) y las próximas solicitudes |
+| ![Cola de atención](docs/capturas/03-cola-atencion.png) | ![Asignar una cama](docs/capturas/04-asignar-cama.png) |
+| **Cola de atención**, ordenada por prioridad clínica y tiempo de espera | **Asignar una cama**: primero las del servicio pedido |
+| ![Gestión de camas](docs/capturas/05-gestion-camas.png) | ![Cuentas](docs/capturas/10-cuentas.png) |
+| **Gestión de camas**, con el estado de cada una | **Cuentas**: bloqueo por intentos fallidos, alta de cuentas y auditoría |
+| ![Análisis de la red](docs/capturas/06-analisis.png) | ![Agrupamiento automático](docs/capturas/07-agrupamiento.png) |
+| **Análisis**: a qué IPS enviar al próximo paciente y espera por prioridad | **Agrupamiento k-means** calificado contra el perfil clínico |
+| ![Ficha del paciente](docs/capturas/08-ficha-paciente.png) | ![Visor de imágenes](docs/capturas/09-visor-imagenes.png) |
+| **Ficha del paciente**: mediciones LOINC, atenciones y estudios de imagen | **Visor de imágenes** del PACS, con brillo, contraste y zoom |
+| ![Portal del paciente](docs/capturas/11-portal-paciente.png) | |
+| **Portal del paciente**: solo su propia información | |
+
 ## Puesta en marcha
 
 Único requisito: **Docker y Docker Compose**. No hace falta instalar Python ni
