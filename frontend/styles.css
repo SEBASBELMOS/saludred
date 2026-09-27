@@ -115,3 +115,5 @@ main{width:100%;max-width:1560px}
 fieldset.form-section{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:16px 0 0}
 fieldset.form-section legend{font-size:11px;font-weight:700;padding:0 6px}
 .audit-meta{font-size:10px;color:var(--muted);word-break:break-word}
+/* Dos acciones de tabla seguidas (por ejemplo "Ver imágenes" y "Subir imagen") no deben quedar pegadas. */
+.table-action + .table-action{margin-left:14px}
