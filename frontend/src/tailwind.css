@@ -1,0 +1,96 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-variant-numeric: tabular-nums;
+    caret-color: theme("colors.accent.DEFAULT");
+    scrollbar-width: thin;
+    scrollbar-color: theme("colors.line.strong") transparent;
+  }
+  /* The browser shrinks <small> to ~11px; the type floor is 12px. */
+  small {
+    font-size: 12px;
+    line-height: 16px;
+  }
+  ::selection {
+    background-color: rgb(18 110 98 / 0.22);
+    color: theme("colors.ink.DEFAULT");
+  }
+  :focus-visible {
+    outline: 2px solid theme("colors.accent.DEFAULT");
+    outline-offset: 2px;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: theme("colors.line.strong");
+    border: 2px solid transparent;
+    background-clip: content-box;
+    border-radius: 9999px;
+  }
+  /* Reduced motion keeps opacity and colour changes and drops movement and scale. */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    button:active,
+    a:active {
+      transform: none !important;
+    }
+  }
+}
+
+@layer components {
+  /* Below 640 px a stacked table becomes a list: each cell shows its column name. */
+  @media (max-width: 639px) {
+    .data-table-stack,
+    .data-table-stack tbody,
+    .data-table-stack tr,
+    table.data-table-stack td {
+      display: block;
+    }
+    .data-table-stack thead {
+      @apply sr-only;
+    }
+    .data-table-stack tr {
+      @apply px-4 py-3;
+    }
+    table.data-table-stack td {
+      @apply whitespace-normal px-0 py-1 pl-28 text-left;
+      position: relative;
+    }
+    table.data-table-stack td::before {
+      content: attr(data-label);
+      @apply absolute left-0 top-1 w-24 text-xs font-normal text-ink-muted;
+    }
+    table.data-table-stack td:first-child {
+      @apply pl-0;
+    }
+    table.data-table-stack td:first-child::before,
+    table.data-table-stack td[data-label=""]::before {
+      content: none;
+    }
+    table.data-table-stack td:last-child {
+      @apply pl-0 pt-2;
+    }
+    table.data-table-stack td:last-child::before {
+      content: none;
+    }
+  }
+  /* Dense table: 40 px rows, hairline separators, instant row hover on real pointers only. */
+  .data-table td {
+    @apply whitespace-nowrap px-4 py-2.5 align-middle;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .data-table tbody tr:hover {
+      @apply bg-canvas;
+    }
+  }
+}
