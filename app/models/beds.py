@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
@@ -11,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Numeric,
     String,
     Uuid,
     func,
@@ -49,6 +51,13 @@ class BedRequest(
     """
 
     __tablename__ = "bed_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "criticality_score IS NULL OR "
+            "(criticality_score >= 0 AND criticality_score <= 1)",
+            name="criticality",
+        ),
+    )
 
     encounter_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("encounters.id", ondelete="RESTRICT"), nullable=False, index=True
@@ -77,6 +86,11 @@ class BedRequest(
         index=True,
     )
     notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Puntaje de criticidad del paciente (0 a 1), lo asigna el servicio de IA.
+    # NULL mientras no se haya calculado: desempata dentro de la misma prioridad.
+    criticality_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(4, 3), nullable=True
+    )
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -178,6 +192,14 @@ class BedStatusEvent(UUIDPrimaryKeyMixin, Base):
     changed_by: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
+    # Cleaning-delay prediction made when the bed entered CLEANING. All three
+    # stay NULL on any other transition, or when the AI service was down: the
+    # bed move never waits for a prediction.
+    predicted_delay_probability: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 4), nullable=True
+    )
+    predicted_delay: Mapped[bool | None] = mapped_column(nullable=True)
+    delay_model_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     location: Mapped["Location"] = relationship(foreign_keys=[location_id])
 

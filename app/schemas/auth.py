@@ -32,6 +32,7 @@ class CurrentUserRead(BaseModel):
     username: str
     full_name: str
     role: RoleCode
+    rol: str = Field(description="Nombre del rol en el contrato publico (admin, medico, ...)")
     organization_id: uuid.UUID | None
     patient_id: uuid.UUID | None
 
@@ -66,8 +67,8 @@ class AccountLockAction(BaseModel):
 class AccountCreate(BaseModel):
     """Alta de una cuenta por la administracion.
 
-    El vinculo depende del rol: un operador pertenece a una IPS, un coordinador
-    a una EPS y un paciente a su ficha, que se indica por numero de documento.
+    El vinculo depende del rol: un operador o especialista pertenece a una IPS,
+    un coordinador o contable a una EPS y un paciente a su ficha, que se indica por numero de documento.
     """
 
     username: str = Field(min_length=3, max_length=80, pattern=r"^[a-z0-9._-]+$")

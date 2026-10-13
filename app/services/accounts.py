@@ -18,6 +18,14 @@ from app.models.identity import User
 from app.services import trail
 from app.services.errors import ConflictError, InvalidValueError, NotFoundError, commit
 
+# Roles that belong to an organization, and the type it must have.
+ORGANIZATION_TYPE_BY_ROLE = {
+    RoleCode.IPS_CLINICAL_OPERATOR: OrganizationType.IPS,
+    RoleCode.SPECIALIST: OrganizationType.IPS,
+    RoleCode.EPS_COORDINATOR: OrganizationType.EPS,
+    RoleCode.ACCOUNTANT: OrganizationType.EPS,
+}
+
 
 def get_user(db: Session, user_id: uuid.UUID) -> User:
     user = db.scalar(
@@ -111,8 +119,8 @@ def create_user(db: Session, data: AccountCreate, *, actor: User) -> User:
     full_name = (data.full_name or "").strip()
     email = (data.email or "").strip() or None
 
-    if data.role in (RoleCode.IPS_CLINICAL_OPERATOR, RoleCode.EPS_COORDINATOR):
-        expected = OrganizationType.IPS if data.role == RoleCode.IPS_CLINICAL_OPERATOR else OrganizationType.EPS
+    if data.role in ORGANIZATION_TYPE_BY_ROLE:
+        expected = ORGANIZATION_TYPE_BY_ROLE[data.role]
         organization = db.scalar(
             select(Organization).where(
                 Organization.id == data.organization_id, Organization.deleted_at.is_(None)

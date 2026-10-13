@@ -105,7 +105,7 @@ def lock_account(
     summary="Crear una cuenta (solo Admin)",
 )
 def create_account(db: DbSession, user: CurrentUser, payload: AccountCreate) -> UserAccountRead:
-    """Operador de IPS, coordinador de EPS, administrador o cuenta de paciente.
+    """Operador o especialista de IPS, coordinador o contable de EPS, administrador o paciente.
 
     Una cuenta de paciente se vincula a su ficha por numero de documento: es la
     unica forma de que alguien vea "Mi informacion", y la decide la

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Query, Response, status
 
 from app.api.deps import CurrentUser, DbSession, PageQuery
 from app.core import authz
@@ -20,6 +20,7 @@ from app.schemas.audit import RecordVersionRead
 from app.schemas.common import Page
 from app.schemas.encounter import EncounterCreate, EncounterRead, EncounterUpdate
 from app.services import encounters as encounters_service
+from app.services import fhir_autosync, patient_access
 from app.services import soft_ops
 
 router = APIRouter(prefix="/api/v1", tags=["encuentros"])
@@ -48,6 +49,7 @@ def list_encounters(
         patient_id=patient_id,
         organization_id=organization_id,
         status=status_filter,
+        granted_patients=patient_access.referred_patient_ids(user),
     )
     return Page(items=items, total=total, page=params.page, page_size=params.page_size)
 
@@ -59,11 +61,16 @@ def list_encounters(
     summary="Crear encuentro",
 )
 def create_encounter(
-    db: DbSession, user: CurrentUser, payload: EncounterCreate
+    db: DbSession,
+    user: CurrentUser,
+    payload: EncounterCreate,
+    background: BackgroundTasks,
 ) -> EncounterRead:
-    authz.require_role(user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR)
+    authz.require_role(user, *authz.CLINICAL_WRITERS)
     authz.ensure_org_scope(user, payload.organization_id)
-    return encounters_service.create_encounter(db, payload, actor=user)
+    encounter = encounters_service.create_encounter(db, payload, actor=user)
+    fhir_autosync.enqueue(background, "encounter", encounter.id, user.id)
+    return encounter
 
 
 @router.get(
@@ -76,7 +83,9 @@ def get_encounter(
 ) -> EncounterRead:
     authz.require_staff(user)
     encounter = encounters_service.get_encounter(db, encounter_id)
-    authz.ensure_org_scope(user, encounter.organization_id)
+    patient_access.ensure_scope_or_referral(
+        db, user, encounter.organization_id, encounter.patient_id
+    )
     return encounter
 
 
@@ -88,7 +97,7 @@ def get_encounter(
 def update_encounter(
     db: DbSession, user: CurrentUser, encounter_id: uuid.UUID, payload: EncounterUpdate
 ) -> EncounterRead:
-    authz.require_role(user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR)
+    authz.require_role(user, *authz.CLINICAL_WRITERS)
     encounter = encounters_service.get_encounter(db, encounter_id)
     authz.ensure_org_scope(user, encounter.organization_id)
     authz.ensure_owner_or_admin(user, encounter.created_by)
@@ -103,7 +112,7 @@ def update_encounter(
 def delete_encounter(
     db: DbSession, user: CurrentUser, encounter_id: uuid.UUID
 ) -> Response:
-    authz.require_role(user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR)
+    authz.require_role(user, *authz.CLINICAL_WRITERS)
     encounter = encounters_service.get_encounter(db, encounter_id)
     authz.ensure_org_scope(user, encounter.organization_id)
     authz.ensure_owner_or_admin(user, encounter.created_by)
@@ -150,5 +159,8 @@ def list_patient_encounters(
 ) -> list[EncounterRead]:
     authz.require_staff(user)
     return encounters_service.list_encounters_for_patient(
-        db, patient_id, organization_id=authz.org_filter_for(user)
+        db,
+        patient_id,
+        organization_id=authz.org_filter_for(user),
+        granted_patients=patient_access.referred_patient_ids(user),
     )

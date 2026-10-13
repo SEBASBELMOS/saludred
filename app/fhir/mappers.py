@@ -27,9 +27,11 @@ from app.models.enums import (
     LocationType,
     OrganizationType,
     Priority,
+    ReferralStatus,
 )
 from app.models.organization import Location, Organization
 from app.models.patient import Patient
+from app.models.referral import Referral
 
 V3_ACT_CODE = "http://terminology.hl7.org/CodeSystem/v3-ActCode"
 V3_ACT_PRIORITY = "http://terminology.hl7.org/CodeSystem/v3-ActPriority"
@@ -81,6 +83,51 @@ def _identifier(system: str, value: str) -> list[dict[str, str]]:
     return [{"system": system, "value": value}]
 
 
+def origin_tag_system(identifier_system: str) -> str:
+    return f"{identifier_system}:origin"
+
+
+ORIGIN_TAG_CODE = "saludred"
+
+
+def with_origin_tag(resource: dict[str, Any], identifier_system: str) -> dict[str, Any]:
+    """Mark a resource as pushed by SaludRed.
+
+    The Subscription fires for EVERY Observation HAPI stores, including the ones
+    this system pushed itself (R15). The tag is how the rest-hook recognizes its
+    own echo and ignores it instead of notifying the clinician twice. HAPI keeps
+    ``meta.tag`` on stored resources and returns it in the delivery.
+    """
+
+    meta = resource.setdefault("meta", {})
+    meta.setdefault("tag", []).append(
+        {
+            "system": origin_tag_system(identifier_system),
+            "code": ORIGIN_TAG_CODE,
+            "display": "Pushed by SaludRed",
+        }
+    )
+    return resource
+
+
+def is_own_resource(resource: dict[str, Any], identifier_system: str) -> bool:
+    """True when the resource carries SaludRed's origin tag.
+
+    A resource whose identifier uses one of this project's systems also counts:
+    a client that dropped the tag is still recognizably ours.
+    """
+
+    system = origin_tag_system(identifier_system)
+    for tag in resource.get("meta", {}).get("tag", []) or []:
+        if tag.get("system") == system and tag.get("code") == ORIGIN_TAG_CODE:
+            return True
+    prefix = f"{identifier_system}:"
+    for identifier in resource.get("identifier", []) or []:
+        if str(identifier.get("system", "")).startswith(prefix):
+            return True
+    return False
+
+
 def patient_to_fhir(
     patient: Patient,
     *,
@@ -96,9 +143,20 @@ def patient_to_fhir(
 
     resource: dict[str, Any] = {
         "resourceType": "Patient",
-        "identifier": _identifier(
-            f"{identifier_system}:documento", patient.business_identifier
-        ),
+        # Three identifiers, so the patient is findable in HAPI by whichever key
+        # a client knows: ``?identifier=CC-123`` (type + number, the sync key),
+        # ``?identifier=123`` (the bare number) or the API's own patient id.
+        "identifier": [
+            {
+                "system": f"{identifier_system}:documento",
+                "value": patient.business_identifier,
+            },
+            {
+                "system": f"{identifier_system}:numero",
+                "value": patient.document_number,
+            },
+            {"system": f"{identifier_system}:patient-id", "value": str(patient.id)},
+        ],
         "active": patient.deleted_at is None,
         "name": [
             {
@@ -121,7 +179,7 @@ def patient_to_fhir(
         resource["address"] = [{"text": patient.address}]
     if managing_organization_ref:
         resource["managingOrganization"] = {"reference": managing_organization_ref}
-    return resource
+    return with_origin_tag(resource, identifier_system)
 
 
 def encounter_to_fhir(
@@ -172,7 +230,7 @@ def encounter_to_fhir(
         resource["serviceProvider"] = {"reference": service_provider_ref}
     if location_ref:
         resource["location"] = [{"location": {"reference": location_ref}}]
-    return resource
+    return with_origin_tag(resource, identifier_system)
 
 
 def observation_to_fhir(
@@ -225,7 +283,7 @@ def observation_to_fhir(
         }
     else:
         resource["valueString"] = observation.value_text
-    return resource
+    return with_origin_tag(resource, identifier_system)
 
 
 def organization_to_fhir(
@@ -262,7 +320,7 @@ def organization_to_fhir(
     }
     if part_of_ref:
         resource["partOf"] = {"reference": part_of_ref}
-    return resource
+    return with_origin_tag(resource, identifier_system)
 
 
 def location_to_fhir(
@@ -307,4 +365,70 @@ def location_to_fhir(
         resource["description"] = f"Servicio: {location.service}"
     if part_of_ref:
         resource["partOf"] = {"reference": part_of_ref}
-    return resource
+    return with_origin_tag(resource, identifier_system)
+
+
+# A referral is a request for a service: FHIR R4 ``ServiceRequest``. Pending and
+# accepted referrals are still open (``active``); a completed one is
+# ``completed``; a rejected one never happened (``revoked``).
+REFERRAL_STATUS_TO_FHIR = {
+    ReferralStatus.PENDING: "active",
+    ReferralStatus.ACCEPTED: "active",
+    ReferralStatus.COMPLETED: "completed",
+    ReferralStatus.REJECTED: "revoked",
+}
+
+SNOMED = "http://snomed.info/sct"
+
+
+def _practitioner_reference(
+    identifier_system: str, user_id: object, display: str
+) -> dict[str, Any]:
+    """A logical reference to a clinician: a display name and our own identifier."""
+
+    return {
+        "identifier": {"system": f"{identifier_system}:users", "value": str(user_id)},
+        "display": display,
+    }
+
+
+def referral_to_fhir(
+    referral: Referral,
+    *,
+    identifier_system: str,
+    patient_ref: str,
+    requester_name: str,
+    performer_name: str,
+) -> dict[str, Any]:
+    """Build a FHIR ServiceRequest for a referral.
+
+    ``subject`` is the patient's FHIR reference, ``requester`` the referring
+    doctor and ``performer`` the specialist; ``reasonCode.text`` carries the
+    reason. ``intent`` is ``order``: a doctor asks another to see the patient.
+    """
+
+    resource: dict[str, Any] = {
+        "resourceType": "ServiceRequest",
+        "identifier": _identifier(f"{identifier_system}:referrals", str(referral.id)),
+        "status": REFERRAL_STATUS_TO_FHIR[referral.status],
+        "intent": "order",
+        "code": {
+            "coding": [
+                {"system": SNOMED, "code": "3457005", "display": "Patient referral"}
+            ],
+            "text": "Remision a especialista",
+        },
+        "subject": {"reference": patient_ref},
+        "requester": _practitioner_reference(
+            identifier_system, referral.referring_user_id, requester_name
+        ),
+        "performer": [
+            _practitioner_reference(
+                identifier_system, referral.specialist_user_id, performer_name
+            )
+        ],
+        "reasonCode": [{"text": referral.motivo}],
+    }
+    if referral.created_at is not None:
+        resource["authoredOn"] = referral.created_at.isoformat()
+    return with_origin_tag(resource, identifier_system)

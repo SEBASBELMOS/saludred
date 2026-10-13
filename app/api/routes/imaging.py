@@ -26,7 +26,7 @@ from app.schemas.imaging import (
     ImagingStudyUpdate,
 )
 from app.services import imaging as imaging_service
-from app.services import pacs
+from app.services import pacs, patient_access
 from app.services import patients as patients_service
 from app.services import soft_ops
 from app.services.errors import InvalidUploadError, NotFoundError
@@ -56,6 +56,7 @@ def list_studies(
         encounter_id=encounter_id,
         modality=modality,
         organization_id=authz.org_filter_for(user),
+        granted_patients=patient_access.referred_patient_ids(user),
     )
     return Page(items=items, total=total, page=params.page, page_size=params.page_size)
 
@@ -69,7 +70,7 @@ def list_studies(
 def create_study(
     db: DbSession, user: CurrentUser, payload: ImagingStudyCreate
 ) -> ImagingStudyRead:
-    authz.require_role(user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR)
+    authz.require_role(user, *authz.CLINICAL_WRITERS)
     authz.ensure_org_scope(user, payload.organization_id)
     patients_service.get_patient(db, payload.patient_id)
     return imaging_service.create_study(db, payload, actor=user)
@@ -85,7 +86,7 @@ def get_study(
 ) -> ImagingStudyRead:
     authz.require_staff(user)
     study = imaging_service.get_study(db, study_id)
-    authz.ensure_org_scope(user, study.organization_id)
+    patient_access.ensure_scope_or_referral(db, user, study.organization_id, study.patient_id)
     return study
 
 
@@ -100,7 +101,7 @@ def update_study(
     study_id: uuid.UUID,
     payload: ImagingStudyUpdate,
 ) -> ImagingStudyRead:
-    authz.require_role(user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR)
+    authz.require_role(user, *authz.CLINICAL_WRITERS)
     study = imaging_service.get_study(db, study_id)
     authz.ensure_org_scope(user, study.organization_id)
     return imaging_service.update_study(db, study, payload, actor=user)
@@ -171,8 +172,22 @@ def patient_studies(
         page_size=params.page_size,
         patient_id=patient_id,
         organization_id=authz.org_filter_for(user),
+        granted_patients=patient_access.referred_patient_ids(user),
     )
     return Page(items=items, total=total, page=params.page, page_size=params.page_size)
+
+
+@router.get(
+    "/patients/{patient_id}/imagenes",
+    summary="Imagenes de un paciente (forma del contrato de verificacion)",
+)
+def patient_images(
+    db: DbSession, user: CurrentUser, params: PageQuery, patient_id: uuid.UUID
+) -> dict[str, list[ImagingStudyRead]]:
+    """Same data and rules as ``patient_studies``, in the contract's shape."""
+
+    page = patient_studies(db, user, params, patient_id)
+    return {"imagenes": page.items}
 
 
 # ---------------------------------------------------------------------------
@@ -180,11 +195,12 @@ def patient_studies(
 # ---------------------------------------------------------------------------
 
 
-def _ensure_can_view(user, study: ImagingStudy) -> None:  # noqa: ANN001
+def _ensure_can_view(db, user, study: ImagingStudy) -> None:  # noqa: ANN001
     """Who may see an image. Refusals answer 404, not 403.
 
     Answering "forbidden" would confirm that the study exists; for the most
-    sensitive part of a record, not even that is disclosed.
+    sensitive part of a record, not even that is disclosed. A specialist with a
+    live referral for the patient may see the patient's images at any IPS.
     """
 
     code = user.role.code
@@ -192,14 +208,18 @@ def _ensure_can_view(user, study: ImagingStudy) -> None:  # noqa: ANN001
         if user.patient_id != study.patient_id:
             raise NotFoundError("Estudio de imagen no encontrado")
         return
-    if code == RoleCode.IPS_CLINICAL_OPERATOR and user.organization_id != study.organization_id:
+    if (
+        code in authz.IPS_SCOPED_ROLES
+        and user.organization_id != study.organization_id
+        and not patient_access.has_referral_access(db, user, study.patient_id)
+    ):
         raise NotFoundError("Estudio de imagen no encontrado")
-    if code not in (RoleCode.ADMIN, RoleCode.EPS_COORDINATOR, RoleCode.IPS_CLINICAL_OPERATOR):
+    if code not in authz.STAFF_ROLES:
         raise NotFoundError("Estudio de imagen no encontrado")
 
 
 def _store(db, user, study_id: uuid.UUID, data: bytes) -> dict:  # noqa: ANN001
-    authz.require_role(user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR)
+    authz.require_role(user, *authz.CLINICAL_WRITERS)
     study = imaging_service.get_study(db, study_id)
     authz.ensure_org_scope(user, study.organization_id)
     patient = patients_service.get_patient(db, study.patient_id)
@@ -235,7 +255,7 @@ async def upload_image(
 )
 def study_images(db: DbSession, user: CurrentUser, study_id: uuid.UUID) -> dict:
     study = imaging_service.get_study(db, study_id)
-    _ensure_can_view(user, study)
+    _ensure_can_view(db, user, study)
     if not study.pacs_study_id:
         return {"study_id": str(study.id), "images": []}
     return {"study_id": str(study.id), "images": pacs.list_instances(study.pacs_study_id)}
@@ -251,7 +271,7 @@ def image_preview(db: DbSession, user: CurrentUser, instance_id: str) -> Respons
     aplicar la misma regla de acceso que a la ficha del paciente."""
 
     study = imaging_service.find_by_pacs_study(db, pacs.study_of_instance(instance_id))
-    _ensure_can_view(user, study)
+    _ensure_can_view(db, user, study)
     return Response(
         content=pacs.preview(instance_id),
         media_type="image/png",

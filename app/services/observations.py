@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.clinical import Encounter, Observation
@@ -24,6 +24,7 @@ def list_observations(
     patient_id: uuid.UUID | None = None,
     encounter_id: uuid.UUID | None = None,
     organization_id: uuid.UUID | None = None,
+    granted_patients: Select[tuple[uuid.UUID]] | None = None,
 ) -> tuple[list[Observation], int]:
     stmt = select(Observation).where(Observation.deleted_at.is_(None))
     if patient_id is not None:
@@ -32,10 +33,12 @@ def list_observations(
         stmt = stmt.where(Observation.encounter_id == encounter_id)
     if organization_id is not None:
         # An observation has no organization of its own; its institutional
-        # scope is inherited from the encounter it was taken in.
-        stmt = stmt.join(Encounter, Observation.encounter_id == Encounter.id).where(
-            Encounter.organization_id == organization_id
-        )
+        # scope is inherited from the encounter it was taken in. A specialist
+        # referred a patient (``granted_patients``) also reads it elsewhere.
+        in_scope = Encounter.organization_id == organization_id
+        if granted_patients is not None:
+            in_scope = or_(in_scope, Observation.patient_id.in_(granted_patients))
+        stmt = stmt.join(Encounter, Observation.encounter_id == Encounter.id).where(in_scope)
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     items = list(

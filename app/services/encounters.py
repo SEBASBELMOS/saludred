@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.clinical import Encounter
@@ -26,12 +26,17 @@ def list_encounters(
     patient_id: uuid.UUID | None = None,
     organization_id: uuid.UUID | None = None,
     status: EncounterStatus | None = None,
+    granted_patients: Select[tuple[uuid.UUID]] | None = None,
 ) -> tuple[list[Encounter], int]:
     stmt = select(Encounter).where(Encounter.deleted_at.is_(None))
     if patient_id is not None:
         stmt = stmt.where(Encounter.patient_id == patient_id)
     if organization_id is not None:
-        stmt = stmt.where(Encounter.organization_id == organization_id)
+        in_scope = Encounter.organization_id == organization_id
+        if granted_patients is not None:
+            # A specialist referred a patient also reads the encounters elsewhere.
+            in_scope = or_(in_scope, Encounter.patient_id.in_(granted_patients))
+        stmt = stmt.where(in_scope)
     if status is not None:
         stmt = stmt.where(Encounter.status == status)
 
@@ -51,19 +56,24 @@ def list_encounters_for_patient(
     patient_id: uuid.UUID,
     *,
     organization_id: uuid.UUID | None = None,
+    granted_patients: Select[tuple[uuid.UUID]] | None = None,
 ) -> list[Encounter]:
     """List a patient's live encounters.
 
     ``organization_id`` is the institutional scope filter: a clinical operator
     receives only the encounters of its own IPS, applied inside the query so
-    the restriction cannot be bypassed by pagination tricks.
+    the restriction cannot be bypassed by pagination tricks. ``granted_patients``
+    lifts it for the patients a specialist was referred.
     """
 
     stmt = select(Encounter).where(
         Encounter.patient_id == patient_id, Encounter.deleted_at.is_(None)
     )
     if organization_id is not None:
-        stmt = stmt.where(Encounter.organization_id == organization_id)
+        in_scope = Encounter.organization_id == organization_id
+        if granted_patients is not None:
+            in_scope = or_(in_scope, Encounter.patient_id.in_(granted_patients))
+        stmt = stmt.where(in_scope)
     return list(db.scalars(stmt.order_by(Encounter.started_at.desc())))
 
 

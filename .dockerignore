@@ -17,5 +17,10 @@ __pycache__/
 
 .DS_Store
 *.log
-# The API image does not need the frontend: it has its own image.
+# The API image does not need the frontend: it has its own image. Only the
+# nginx config is kept, because tests/test_deploy_constraints.py checks that the
+# SSE location does not buffer.
 frontend/
+!frontend/nginx.conf
+# The AI service has its own image (ml/Dockerfile).
+ml/

@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.security import verify_password
+from app.events.bus import DomainEvent, publish
 from app.models.enums import AuditAction
 from app.models.identity import User
-from app.services import trail
+from app.services import recipients, trail
 from app.services.errors import commit
+
+logger = logging.getLogger(__name__)
 
 # Intentos permitidos antes de bloquear. Tres es un equilibrio conocido: deja
 # margen para un error de tipeo o un teclado en otro idioma, y corta mucho
@@ -117,6 +121,7 @@ def authenticate(db: Session, username: str, password: str) -> User:
         commit(db)
 
         if locked_now:
+            _announce_lock(db, user)
             raise AccountLockedError
         raise InvalidCredentialsError
 
@@ -132,6 +137,38 @@ def authenticate(db: Session, username: str, password: str) -> User:
     )
     commit(db)
     return user
+
+
+def _announce_lock(db: Session, user: User) -> None:
+    """R19 flow 4: tell every admin which account was locked.
+
+    Published AFTER the lock is committed, so a reactor never sees (or leaks) a
+    lock that was rolled back. It is best effort: the bus isolates a failing
+    reactor, and a failure here must never change what the login caller sees,
+    which is the same locked answer either way. The caller learns nothing new:
+    the 423 already says the account is locked.
+    """
+
+    try:
+        publish(
+            DomainEvent(
+                tipo="cuenta_bloqueada",
+                mensaje=(
+                    f"La cuenta {user.username} fue bloqueada tras "
+                    f"{MAX_FAILED_ATTEMPTS} intentos fallidos consecutivos"
+                ),
+                recipients=tuple(db.scalars(recipients.admins_stmt())),
+                clinical=False,
+                datos={
+                    "usuario": user.username,
+                    "usuario_id": str(user.id),
+                    "intentos": MAX_FAILED_ATTEMPTS,
+                },
+            ),
+            db,
+        )
+    except Exception:  # noqa: BLE001 -- never alter the login answer
+        logger.exception("Could not announce the lock of %s", user.username)
 
 
 def remaining_attempts(user: User) -> int:

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Query, Response, status
 
 from app.api.deps import CurrentUser, DbSession, PageQuery
 from app.core import authz
@@ -24,7 +24,14 @@ from app.models.enums import RoleCode
 from app.models.patient import Patient
 from app.schemas.audit import RecordVersionRead
 from app.schemas.common import Page
-from app.schemas.patient import PatientCreate, PatientRead, PatientUpdate
+from app.schemas.patient import (
+    EligibleClinicianRead,
+    PatientCreate,
+    PatientRead,
+    PatientUpdate,
+    ResponsibleClinicianUpdate,
+)
+from app.services import fhir_autosync
 from app.services import patients as patients_service
 from app.services.errors import InvalidValueError
 from app.services import soft_ops
@@ -88,10 +95,16 @@ def list_patients(
     summary="Crear paciente",
 )
 def create_patient(
-    db: DbSession, user: CurrentUser, payload: PatientCreate
+    db: DbSession,
+    user: CurrentUser,
+    payload: PatientCreate,
+    background: BackgroundTasks,
 ) -> PatientRead:
     authz.require_role(user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR)
-    return patients_service.create_patient(db, payload, actor=user)
+    patient = patients_service.create_patient(db, payload, actor=user)
+    # R15: push to HAPI after the response; a FHIR outage never fails the write.
+    fhir_autosync.enqueue(background, "patient", patient.id, user.id)
+    return patient
 
 
 @router.get("/{patient_id}", response_model=PatientRead, summary="Consultar paciente")
@@ -108,12 +121,64 @@ def get_patient(
     summary="Actualizar paciente (soft edit con historial)",
 )
 def update_patient(
-    db: DbSession, user: CurrentUser, patient_id: uuid.UUID, payload: PatientUpdate
+    db: DbSession,
+    user: CurrentUser,
+    patient_id: uuid.UUID,
+    payload: PatientUpdate,
+    background: BackgroundTasks,
 ) -> PatientRead:
     authz.require_role(user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR)
     patient = patients_service.get_patient(db, patient_id)
     authz.ensure_owner_or_admin(user, patient.created_by)
-    return patients_service.update_patient(db, patient, payload, actor=user)
+    patient = patients_service.update_patient(db, patient, payload, actor=user)
+    fhir_autosync.enqueue(background, "patient", patient.id, user.id)
+    return patient
+
+
+@router.get(
+    "/{patient_id}/eligible-clinicians",
+    response_model=list[EligibleClinicianRead],
+    summary="Clinicos que pueden ser responsables del paciente",
+)
+def list_eligible_clinicians(
+    db: DbSession, user: CurrentUser, patient_id: uuid.UUID
+) -> list[EligibleClinicianRead]:
+    """Medicos y especialistas activos de la IPS donde se atiende al paciente.
+    Mismos roles que el cambio de responsable: admin, o medico/especialista de
+    esa IPS (que solo ve colegas de su propia IPS)."""
+
+    authz.require_role(
+        user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR, RoleCode.SPECIALIST
+    )
+    patient = patients_service.get_patient(db, patient_id)
+    return [
+        EligibleClinicianRead(**row)
+        for row in patients_service.eligible_clinicians(db, patient, actor=user)
+    ]
+
+
+@router.put(
+    "/{patient_id}/responsible-clinician",
+    response_model=PatientRead,
+    summary="Cambiar el clinico responsable del paciente",
+)
+def change_responsible_clinician(
+    db: DbSession,
+    user: CurrentUser,
+    patient_id: uuid.UUID,
+    payload: ResponsibleClinicianUpdate,
+) -> PatientRead:
+    """Admin, or a medico/especialista of the patient's IPS. The new
+    responsible must be an active medico or especialista (a colleague of the
+    same IPS when the caller is not admin). The change is audited."""
+
+    authz.require_role(
+        user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR, RoleCode.SPECIALIST
+    )
+    patient = patients_service.get_patient(db, patient_id)
+    return patients_service.set_responsible_clinician(
+        db, patient, payload.clinician_id, actor=user
+    )
 
 
 @router.delete(

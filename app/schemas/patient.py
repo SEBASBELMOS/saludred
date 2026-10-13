@@ -81,5 +81,23 @@ class PatientRead(PatientBase):
     # Quien registro al paciente. La API decide si alguien puede editarlo; la
     # pantalla lo usa solo para no ofrecer un boton que terminaria en 403.
     created_by: uuid.UUID | None = None
+    # Clinician who answers for the patient; receives the reactive events.
+    responsible_clinician_id: uuid.UUID | None = None
+    responsible_clinician_name: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class EligibleClinicianRead(BaseModel):
+    """One candidate of ``GET /patients/{id}/eligible-clinicians``."""
+
+    id: uuid.UUID
+    nombre: str
+    rol: str
+    organizacion: str
+
+
+class ResponsibleClinicianUpdate(BaseModel):
+    """Payload accepted by ``PUT /patients/{id}/responsible-clinician``."""
+
+    clinician_id: uuid.UUID

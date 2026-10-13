@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from app.models.enums import (
     BedAssignmentStatus,
@@ -120,6 +121,10 @@ class BedRequestRead(BaseModel):
     priority: Priority
     status: BedRequestStatus
     notes: str | None
+    criticality_score: float | None = Field(
+        default=None,
+        description="Criticidad del paciente entre 0 y 1; solo lectura",
+    )
     requested_at: datetime
     resolved_at: datetime | None
 
@@ -198,3 +203,10 @@ class BedStatusEventRead(BaseModel):
     reason: str | None
     event_at: datetime
     changed_by: uuid.UUID | None
+    predicted_delay_probability: Decimal | None = None
+    predicted_delay: bool | None = None
+    delay_model_version: str | None = None
+
+    @field_serializer("predicted_delay_probability")
+    def _probability(self, value: Decimal | None) -> float | None:
+        return float(value) if value is not None else None

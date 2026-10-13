@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Query, Response, status
 
 from app.api.deps import CurrentUser, DbSession, PageQuery
 from app.core import authz
@@ -23,7 +23,9 @@ from app.schemas.observation import (
     ObservationUpdate,
 )
 from app.services import encounters as encounters_service
+from app.services import fhir_autosync
 from app.services import observations as observations_service
+from app.services import patient_access
 from app.services import soft_ops
 
 router = APIRouter(prefix="/api/v1", tags=["observaciones"])
@@ -49,6 +51,7 @@ def list_observations(
         patient_id=patient_id,
         encounter_id=encounter_id,
         organization_id=authz.org_filter_for(user),
+        granted_patients=patient_access.referred_patient_ids(user),
     )
     return Page(items=items, total=total, page=params.page, page_size=params.page_size)
 
@@ -60,12 +63,17 @@ def list_observations(
     summary="Crear observacion",
 )
 def create_observation(
-    db: DbSession, user: CurrentUser, payload: ObservationCreate
+    db: DbSession,
+    user: CurrentUser,
+    payload: ObservationCreate,
+    background: BackgroundTasks,
 ) -> ObservationRead:
-    authz.require_role(user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR)
+    authz.require_role(user, *authz.CLINICAL_WRITERS)
     encounter = encounters_service.get_encounter(db, payload.encounter_id)
     authz.ensure_org_scope(user, encounter.organization_id)
-    return observations_service.create_observation(db, payload, actor=user)
+    observation = observations_service.create_observation(db, payload, actor=user)
+    fhir_autosync.enqueue(background, "observation", observation.id, user.id)
+    return observation
 
 
 @router.get(
@@ -78,7 +86,9 @@ def get_observation(
 ) -> ObservationRead:
     authz.require_staff(user)
     observation = observations_service.get_observation(db, observation_id)
-    authz.ensure_org_scope(user, observation.encounter.organization_id)
+    patient_access.ensure_scope_or_referral(
+        db, user, observation.encounter.organization_id, observation.patient_id
+    )
     return observation
 
 
@@ -93,7 +103,7 @@ def update_observation(
     observation_id: uuid.UUID,
     payload: ObservationUpdate,
 ) -> ObservationRead:
-    authz.require_role(user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR)
+    authz.require_role(user, *authz.CLINICAL_WRITERS)
     observation = observations_service.get_observation(db, observation_id)
     authz.ensure_org_scope(user, observation.encounter.organization_id)
     authz.ensure_owner_or_admin(user, observation.created_by)
@@ -108,7 +118,7 @@ def update_observation(
 def delete_observation(
     db: DbSession, user: CurrentUser, observation_id: uuid.UUID
 ) -> Response:
-    authz.require_role(user, RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR)
+    authz.require_role(user, *authz.CLINICAL_WRITERS)
     observation = observations_service.get_observation(db, observation_id)
     authz.ensure_org_scope(user, observation.encounter.organization_id)
     authz.ensure_owner_or_admin(user, observation.created_by)
@@ -157,5 +167,7 @@ def list_encounter_observations(
 ) -> list[ObservationRead]:
     authz.require_staff(user)
     encounter = encounters_service.get_encounter(db, encounter_id)
-    authz.ensure_org_scope(user, encounter.organization_id)
+    patient_access.ensure_scope_or_referral(
+        db, user, encounter.organization_id, encounter.patient_id
+    )
     return observations_service.list_observations_for_encounter(db, encounter_id)

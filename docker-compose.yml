@@ -1,7 +1,8 @@
 # Infraestructura completa del proyecto.
 #
-# `docker compose up -d` levanta las cuatro piezas: la base de datos de la
-# aplicacion, la API, el servidor HAPI FHIR y la base de datos propia de HAPI.
+# `docker compose up -d` levanta las piezas: la base de datos de la aplicacion,
+# la API, el servicio de IA (ml), MongoDB (contabilidad), la interfaz web, el servidor HAPI FHIR y la
+# base de datos propia de HAPI.
 # No hace falta instalar Python ni dependencias en la maquina anfitriona.
 #
 # El PACS (Orthanc) queda en el perfil "pacs" y no arranca por defecto: es
@@ -41,6 +42,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      ml:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -56,6 +61,36 @@ services:
       ORTHANC_USER: ${ORTHANC_USER:-api}
       ORTHANC_PASSWORD: ${ORTHANC_PASSWORD:-orthanc_dev_2026}
       SEED_ON_START: ${SEED_ON_START:-true}
+      # Servicio de IA: solo la API lo alcanza, por nombre en la red interna.
+      ML_SERVICE_URL: ${ML_SERVICE_URL:-http://ml:8001}
+      # R21: URL que HAPI llama cuando llega una Observation (red interna de
+      # Compose, nunca el tunel). FHIR_HOOK_SECRET llega por el .env: sin el la
+      # API no arranca. R15: sincronizacion automatica hacia HAPI.
+      FHIR_HOOK_ENDPOINT: ${FHIR_HOOK_ENDPOINT:-http://api:8000/api/v1/fhir/hooks}
+      FHIR_AUTO_SYNC: ${FHIR_AUTO_SYNC:-true}
+      # Contabilidad (R09): MongoDB, alcanzable solo por nombre de servicio.
+      # MONGO_ROOT_PASSWORD es obligatoria y llega por el .env; use una clave
+      # alfanumerica (va dentro de la URL sin codificar).
+      MONGO_URL: mongodb://${MONGO_ROOT_USER:-saludred}:${MONGO_ROOT_PASSWORD:?Defina MONGO_ROOT_PASSWORD en el .env}@mongo:27017/?authSource=admin
+      MONGO_DB: ${MONGO_DB:-saludred_contabilidad}
+      # Alertas criticas (R20): temporizador interno que escala una alerta sin
+      # reconocer y avisa de camas libres sin limpiar. Para mostrar el
+      # escalamiento en una demostracion, ALERT_ESCALATION_MINUTES=1.
+      ALERT_ESCALATION_ENABLED: ${ALERT_ESCALATION_ENABLED:-true}
+      ALERT_ESCALATION_MINUTES: ${ALERT_ESCALATION_MINUTES:-5}
+      ALERT_MONITOR_INTERVAL_SECONDS: ${ALERT_MONITOR_INTERVAL_SECONDS:-30}
+      BED_CLEANING_ALERT_MINUTES: ${BED_CLEANING_ALERT_MINUTES:-60}
+      # Evidencia de limpieza: con true, una cama no sale de CLEANING sin una
+      # limpieza aprobada por otra persona (409). El front lo explica y ofrece
+      # registrar la evidencia desde el panel de la cama.
+      REQUIRE_CLEANING_EVIDENCE: ${REQUIRE_CLEANING_EVIDENCE:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # PSEUDONYM_KEY (clave HMAC de la seudonimizacion, R12) llega por el
+      # .env, como JWT_SECRET_KEY: sin ella la API no arranca.
+    # UN SOLO proceso uvicorn, a proposito: el canal en tiempo real (SSE) guarda
+    # las conexiones abiertas en la memoria del proceso. Con varios workers o
+    # replicas, un evento publicado en uno no llegaria a las conexiones de otro.
+    # No agregar --workers ni `deploy.replicas` (ver docs/EVENTOS.md).
     ports:
       - "8000:8000"
     healthcheck:
@@ -68,6 +103,63 @@ services:
       timeout: 5s
       retries: 10
       start_period: 40s
+    restart: unless-stopped
+
+  mongo:
+    # Contabilidad (R09): las facturas viven en MongoDB, separadas de la
+    # historia clinica (PostgreSQL). Ver docs/CONTABILIDAD.md.
+    #
+    # Decisiones:
+    #
+    # 1. No tiene `ports`: ni el navegador ni el anfitrion lo alcanzan. Solo la
+    #    API le habla, por nombre (mongo:27017) dentro de la red de Docker.
+    # 2. La clave del usuario raiz es obligatoria y no tiene valor por defecto:
+    #    sin MONGO_ROOT_PASSWORD en el .env, `docker compose` se niega a
+    #    arrancar en lugar de levantar una base con una clave conocida.
+    # 3. Los datos van en un volumen con nombre: sobreviven a `down` y a
+    #    reconstruir la imagen.
+    image: mongo:7
+    container_name: saludred-mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-saludred}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Defina MONGO_ROOT_PASSWORD en el .env}
+    volumes:
+      - saludred-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ping:1}).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  ml:
+    # Servicio de prediccion (criticidad del paciente y retraso de limpieza).
+    #
+    # Tres decisiones:
+    #
+    # 1. No tiene `ports`: el navegador y el anfitrion no lo alcanzan. Solo la
+    #    API le habla, por nombre (http://ml:8001) dentro de la red de Docker.
+    # 2. No conoce la base de datos ni recibe su cadena de conexion. Le llegan
+    #    variables clinicas minimizadas y un seudonimo, nunca identificadores
+    #    (R12). Rechaza cualquier campo que no este en su contrato.
+    # 3. Los modelos se entrenan al construir la imagen, con los CSV de
+    #    ml/data: la imagen lleva exactamente los modelos que describe su
+    #    metrics.json. Corre en Linux porque en la ASUS (Windows) las DLL de
+    #    scikit-learn se bloquean.
+    build: ./ml
+    image: saludred-ml:latest
+    container_name: saludred-ml
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3).status == 200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
     restart: unless-stopped
 
   web:
@@ -169,6 +261,21 @@ services:
       # X-Forwarded-Proto y genera los enlaces con el esquema correcto.
       "server.forward-headers-strategy": FRAMEWORK
       HAPI_FHIR_FHIR_VERSION: R4
+      # R21: Subscription con canal rest-hook. Sin esto HAPI acepta el recurso
+      # pero nunca entrega nada. En el starter 7.4.0 la propiedad es
+      # `hapi.fhir.subscription.resthook_enabled` (false por defecto):
+      #   - application.yaml de hapi-fhir-jpaserver-starter, tag image/v7.4.0
+      #     (bloque `subscription:` comentado) y su README ("hapi.fhir.subscription
+      #     .resthook_enabled - Enables REST Hook subscriptions"), que ademas
+      #     documenta pasar las propiedades como variables de entorno.
+      #   - AppProperties.Subscription.resthook_enabled y FhirServerConfigCommon
+      #     (log "REST-hook subscriptions enabled").
+      # Verificado en la ASUS (03/10/2026) con HAPI 7.4.0: la forma punteada y
+      # la MAYUSCULAS_CON_GUION_BAJO funcionan por separado (el log dice
+      # "REST-hook subscriptions enabled" y HAPI entrega a la API); sin ninguna
+      # de las dos HAPI no entrega nada. Se deja solo la segunda, igual que las
+      # demas variables HAPI_FHIR_* de este archivo y sin clave con puntos.
+      HAPI_FHIR_SUBSCRIPTION_RESTHOOK_ENABLED: "true"
       HAPI_FHIR_ALLOW_MULTIPLE_DELETE: "true"
       HAPI_FHIR_REUSE_CACHED_SEARCH_RESULTS_MILLIS: "-1"
     restart: unless-stopped
@@ -231,3 +338,4 @@ volumes:
   saludred-db-data:
   saludred-hapi-db-data:
   saludred-orthanc-data:
+  saludred-mongo-data:

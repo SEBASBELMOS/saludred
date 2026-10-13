@@ -25,3 +25,11 @@ htmlcov/
 # Local data
 *.log
 *.sqlite3
+
+# Frontend build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# AI service: models are trained at image build time
+ml/artifacts/

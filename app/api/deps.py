@@ -44,23 +44,16 @@ def _unauthorized(detail: str) -> HTTPException:
     )
 
 
-def get_current_user(
-    db: DbSession,
-    credentials: Annotated[
-        HTTPAuthorizationCredentials | None, Depends(bearer_scheme)
-    ] = None,
-) -> User:
-    """Resolve the Bearer token into a live ``User`` row.
+def user_from_token(db: Session, token: str) -> User:
+    """Resolve a JWT into a live ``User`` row, or raise 401.
 
     The token only proves identity. Role, scope and account status are re-read
-    from the database on every request, so revoking an account or changing a
-    role takes effect immediately instead of when the token expires.
+    from the database every time, so revoking or locking an account, or changing
+    a role, takes effect immediately instead of when the token expires. REST
+    requests and the live streams share this one check.
     """
 
-    if credentials is None:
-        raise _unauthorized("Se requiere un token de acceso")
-
-    payload = decode_access_token(credentials.credentials)
+    payload = decode_access_token(token)
     if payload is None:
         raise _unauthorized("Token invalido o expirado")
 
@@ -74,7 +67,24 @@ def get_current_user(
     )
     if user is None or not user.is_active:
         raise _unauthorized("La cuenta no existe o esta deshabilitada")
+    # A token issued before the lock must stop working at once: it would
+    # otherwise stay valid for the rest of its lifetime (R02).
+    if user.is_locked:
+        raise _unauthorized("La cuenta esta bloqueada")
     return user
+
+
+def get_current_user(
+    db: DbSession,
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(bearer_scheme)
+    ] = None,
+) -> User:
+    """Resolve the Bearer token of the request into a live ``User`` row."""
+
+    if credentials is None:
+        raise _unauthorized("Se requiere un token de acceso")
+    return user_from_token(db, credentials.credentials)
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]

@@ -34,6 +34,25 @@ class PacsUnavailableError(ServiceError):
     """
 
 
+class MlServiceUnavailableError(ServiceError):
+    """The AI service is down, too slow or failing. Mapped to 503.
+
+    Callers must leave nothing half-written when they see it.
+    """
+
+
+class MlServiceRejectedError(ServiceError):
+    """The AI service refused the payload (4xx). Mapped to 502: it is a bug here."""
+
+
+class BillingUnavailableError(ServiceError):
+    """MongoDB (billing) is not configured, down or failing. Mapped to 503.
+
+    Billing is isolated from the rest of the system: callers that are not a
+    billing route (report approval, bed release) log it and carry on.
+    """
+
+
 class InvalidValueError(ServiceError):
     """A value the server refuses to store: out of range, missing criteria.
 

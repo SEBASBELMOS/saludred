@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.clinical import Encounter
@@ -30,6 +30,7 @@ def list_studies(
     encounter_id: uuid.UUID | None = None,
     modality: ImagingModality | None = None,
     organization_id: uuid.UUID | None = None,
+    granted_patients: Select[tuple[uuid.UUID]] | None = None,
     include_deleted: bool = False,
 ) -> tuple[list[ImagingStudy], int]:
     stmt = select(ImagingStudy)
@@ -45,7 +46,12 @@ def list_studies(
         # The institutional filter goes into the query, never into a list
         # comprehension afterwards: a row another IPS owns must not travel
         # to this process at all.
-        stmt = stmt.where(ImagingStudy.organization_id == organization_id)
+        # A specialist referred a patient (``granted_patients``) also reads the
+        # studies taken at other IPS.
+        in_scope = ImagingStudy.organization_id == organization_id
+        if granted_patients is not None:
+            in_scope = or_(in_scope, ImagingStudy.patient_id.in_(granted_patients))
+        stmt = stmt.where(in_scope)
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     items = list(

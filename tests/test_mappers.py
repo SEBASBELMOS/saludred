@@ -21,9 +21,14 @@ class TestPatientMapper:
             make_patient(), identifier_system=IDENTIFIER_SYSTEM
         )
         assert resource["resourceType"] == "Patient"
-        assert resource["identifier"] == [
-            {"system": f"{IDENTIFIER_SYSTEM}:documento", "value": "CC-1032456789"}
-        ]
+        assert resource["identifier"][0] == {
+            "system": f"{IDENTIFIER_SYSTEM}:documento",
+            "value": "CC-1032456789",
+        }
+        # Also findable by the bare number and by the API's patient id.
+        assert {i["system"]: i["value"] for i in resource["identifier"]}[
+            f"{IDENTIFIER_SYSTEM}:numero"
+        ] == "1032456789"
 
     def test_demographics(self):
         resource = mappers.patient_to_fhir(

@@ -179,16 +179,28 @@ def _kmeans_once(points: list[list[float]], k: int, rng: random.Random) -> tuple
     return labels, inertia
 
 
-def kmeans(points: list[list[float]], k: int) -> list[int]:
-    """Best of several restarts, with a fixed seed so the answer is stable."""
+def kmeans_fit(
+    points: list[list[float]], k: int, seed: int = SEED
+) -> tuple[list[int], float]:
+    """Best of several restarts: the labels and the inertia (within-group sum of squares).
 
-    rng = random.Random(SEED + k)
+    The inertia is what an elbow plot draws; the seed is a parameter so callers
+    with their own dataset can pin it without touching the patient clustering.
+    """
+
+    rng = random.Random(seed + k)
     best_labels, best_inertia = [], math.inf
     for _ in range(RESTARTS):
         labels, inertia = _kmeans_once(points, k, rng)
         if inertia < best_inertia:
             best_labels, best_inertia = labels, inertia
-    return best_labels
+    return best_labels, best_inertia
+
+
+def kmeans(points: list[list[float]], k: int) -> list[int]:
+    """Best of several restarts, with a fixed seed so the answer is stable."""
+
+    return kmeans_fit(points, k)[0]
 
 
 def distance_matrix(points: list[list[float]]) -> list[list[float]]:
@@ -197,8 +209,8 @@ def distance_matrix(points: list[list[float]]) -> list[list[float]]:
     return [[math.sqrt(_distance2(a, b)) for b in points] for a in points]
 
 
-def silhouette(distances: list[list[float]], labels: list[int]) -> float:
-    """Mean silhouette: +1 well separated, 0 on the border, negative misplaced."""
+def silhouette_samples(distances: list[list[float]], labels: list[int]) -> list[float]:
+    """Silhouette of each point: +1 well separated, 0 on the border, negative misplaced."""
 
     sizes = Counter(labels)
     scores = []
@@ -213,6 +225,13 @@ def silhouette(distances: list[list[float]], labels: list[int]) -> float:
         a = totals[own] / (sizes[own] - 1)
         b = min(totals[g] / sizes[g] for g in sizes if g != own)
         scores.append((b - a) / max(a, b) if max(a, b) else 0.0)
+    return scores
+
+
+def silhouette(distances: list[list[float]], labels: list[int]) -> float:
+    """Mean silhouette over all points."""
+
+    scores = silhouette_samples(distances, labels)
     return sum(scores) / len(scores)
 
 

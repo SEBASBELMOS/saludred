@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from sqlalchemy import Select, case, func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
+from app.events.bus import DomainEvent, publish
 from app.models.beds import BedAssignment, BedRequest, BedStatusEvent
 from app.models.clinical import Encounter
 from app.models.enums import (
@@ -33,8 +35,15 @@ from app.models.identity import User
 from app.models.organization import Location, Organization
 from app.models.patient import Patient
 from app.schemas.beds import BedRequestCreate
+from app.services import cleaning as cleaning_service
+from app.services import cleaning_prediction
 from app.services import soft_ops, trail
-from app.services.errors import ConflictError, NotFoundError, commit
+from app.services.errors import (
+    ConflictError,
+    InvalidValueError,
+    NotFoundError,
+    commit,
+)
 
 # Rango clinico de cada prioridad. Mayor numero, se atiende antes.
 PRIORITY_RANK: dict[Priority, int] = {
@@ -46,15 +55,34 @@ PRIORITY_RANK: dict[Priority, int] = {
 # Estados en los que una solicitud sigue esperando cama.
 OPEN_STATUSES = (BedRequestStatus.PENDING, BedRequestStatus.IN_REVIEW)
 
-# Orden de la cola: prioridad clinica primero, antiguedad despues.
+# Orden de la cola: prioridad clinica, luego criticidad del paciente (mayor
+# primero, sin puntaje al final) y por ultimo antiguedad.
 QUEUE_ORDER = (
     case(
         {p.value: rank for p, rank in PRIORITY_RANK.items()},
         value=BedRequest.priority,
         else_=0,
     ).desc(),
+    BedRequest.criticality_score.desc().nulls_last(),
     BedRequest.requested_at.asc(),
 )
+
+
+def _queue_key(solicitud: BedRequest) -> tuple[int, float, datetime]:
+    """Sort key equivalent to ``QUEUE_ORDER``: the smaller key is served first."""
+
+    puntaje = solicitud.criticality_score
+    return (
+        -PRIORITY_RANK[solicitud.priority],
+        # Sin puntaje va despues de cualquiera con puntaje (el maximo es 1).
+        -float(puntaje) if puntaje is not None else 1.0,
+        _as_utc(solicitud.requested_at),
+    )
+
+
+def _as_utc(moment: datetime) -> datetime:
+    # SQLite pierde la zona horaria; una fecha sin zona en esta columna es UTC.
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +292,20 @@ def create_bed_request(
     return solicitud
 
 
+def set_criticality_score(
+    db: Session, bed_request_id: uuid.UUID, score: float
+) -> BedRequest:
+    """Store the patient criticality (0 to 1) computed by the AI service."""
+
+    if not 0 <= score <= 1:
+        raise InvalidValueError("El puntaje de criticidad debe estar entre 0 y 1")
+    solicitud = get_bed_request(db, bed_request_id)
+    solicitud.criticality_score = score
+    commit(db)
+    db.refresh(solicitud)
+    return solicitud
+
+
 def list_queue(
     db: Session,
     *,
@@ -314,6 +356,11 @@ def list_queue(
                 "priority": solicitud.priority,
                 "status": solicitud.status,
                 "notes": solicitud.notes,
+                "criticality_score": (
+                    float(solicitud.criticality_score)
+                    if solicitud.criticality_score is not None
+                    else None
+                ),
                 "requested_at": solicitud.requested_at,
                 "resolved_at": solicitud.resolved_at,
                 "queue_position": posicion,
@@ -378,12 +425,15 @@ def _more_urgent_waiting(
 ) -> BedRequest | None:
     """A request that should be served before this one, if any.
 
+    "Antes" usa la misma clave que la cola: prioridad, luego criticidad (sin
+    puntaje al final) y luego antiguedad.
+
     Compara solo contra solicitudes que compiten por la misma cama: mismo
     servicio y misma institucion destino. Una urgencia de otra IPS no bloquea
     una asignacion aqui.
     """
 
-    rango = PRIORITY_RANK[solicitud.priority]
+    clave = _queue_key(solicitud)
     stmt = select(BedRequest).where(
         BedRequest.id != solicitud.id,
         BedRequest.status.in_(OPEN_STATUSES),
@@ -396,10 +446,7 @@ def _more_urgent_waiting(
         )
 
     for otra in db.scalars(stmt.order_by(*QUEUE_ORDER)):
-        otro_rango = PRIORITY_RANK[otra.priority]
-        if otro_rango > rango:
-            return otra
-        if otro_rango == rango and otra.requested_at < solicitud.requested_at:
+        if _queue_key(otra) < clave:
             return otra
     return None
 
@@ -534,6 +581,18 @@ def active_assignment_for_bed(db: Session, location_id: uuid.UUID) -> BedAssignm
     return asignacion
 
 
+def _delay_fields(prediccion: cleaning_prediction.DelayPrediction | None) -> dict[str, object]:
+    """Columns of ``bed_status_events`` that carry the cleaning-delay guess."""
+
+    if prediccion is None:
+        return {}
+    return {
+        "predicted_delay_probability": prediccion.probability,
+        "predicted_delay": prediccion.late,
+        "delay_model_version": prediccion.model_version,
+    }
+
+
 def release_bed(
     db: Session, asignacion: BedAssignment, *, actor: User, reason: str | None = None
 ) -> BedAssignment:
@@ -550,8 +609,20 @@ def release_bed(
     if cama is None:
         raise NotFoundError("Cama no encontrada")
 
+    # Prediccion de retraso de limpieza (IA). Es informativa y de mejor esfuerzo:
+    # si el servicio no responde, la cama pasa a limpieza igual.
+    liberada = datetime.now(timezone.utc)
+    prediccion = cleaning_prediction.predict(
+        db,
+        cama,
+        release_reason="discharge",
+        previous_stay_hours=round(
+            (liberada - _as_utc(asignacion.assigned_at)).total_seconds() / 3600, 1
+        ),
+    )
+
     asignacion.status = BedAssignmentStatus.RELEASED
-    asignacion.released_at = datetime.now(timezone.utc)
+    asignacion.released_at = liberada
     asignacion.updated_by = actor.id
 
     anterior = cama.status
@@ -566,9 +637,20 @@ def release_bed(
             new_status=BedStatus.CLEANING,
             reason=reason or "Cama liberada, pendiente de alistamiento",
             changed_by=actor.id,
+            **_delay_fields(prediccion),
         )
     )
     commit(db)
+    # The stay is over: billing (a reactor) turns it into a bed-day invoice.
+    publish(
+        DomainEvent(
+            tipo="cama_liberada",
+            mensaje="Cama liberada",
+            recipients=(),
+            datos={"asignacion_id": str(asignacion.id), "cama_id": str(cama.id)},
+        ),
+        db,
+    )
     db.refresh(asignacion)
     return asignacion
 
@@ -605,6 +687,20 @@ def change_bed_status(
             "Una cama ocupada se desocupa liberando su asignacion, no cambiando su estado"
         )
 
+    # Compuerta opcional (REQUIRE_CLEANING_EVIDENCE): una cama no vuelve a estar
+    # disponible sin una limpieza aprobada por una persona distinta de quien la
+    # registro. Apagada, el cambio de estado no cambia.
+    if (
+        cama.status == BedStatus.CLEANING
+        and new_status == BedStatus.AVAILABLE
+        and get_settings().require_cleaning_evidence
+        and not cleaning_service.has_approved_evidence(db, cama)
+    ):
+        raise ConflictError("La cama no tiene evidencia de limpieza aprobada")
+
+    prediccion = (
+        cleaning_prediction.predict(db, cama) if new_status == BedStatus.CLEANING else None
+    )
     anterior = cama.status
     cama.status = new_status
     cama.updated_by = actor.id
@@ -615,6 +711,7 @@ def change_bed_status(
             new_status=new_status,
             reason=reason,
             changed_by=actor.id,
+            **_delay_fields(prediccion),
         )
     )
     commit(db)

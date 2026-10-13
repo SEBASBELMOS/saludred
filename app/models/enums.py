@@ -58,17 +58,21 @@ class AdministrativeGender(str, Enum):
 
 
 class RoleCode(str, Enum):
-    """The four roles of the system.
+    """The six roles of the system.
 
-    ADMIN, IPS_CLINICAL_OPERATOR and PATIENT cover the three archetypes required
-    by the assignment. EPS_COORDINATOR is the domain-specific role that makes the
-    multi-IPS network scope meaningful.
+    ADMIN, IPS_CLINICAL_OPERATOR ("medico"), SPECIALIST, PATIENT and ACCOUNTANT
+    cover the roles required by the assignment. EPS_COORDINATOR is the
+    domain-specific role that makes the multi-IPS network scope meaningful.
+    SPECIALIST is clinical staff of one IPS; ACCOUNTANT belongs to an EPS,
+    handles billing and never sees clinical data.
     """
 
     ADMIN = "ADMIN"
     EPS_COORDINATOR = "EPS_COORDINATOR"
     IPS_CLINICAL_OPERATOR = "IPS_CLINICAL_OPERATOR"
     PATIENT = "PATIENT"
+    SPECIALIST = "SPECIALIST"
+    ACCOUNTANT = "ACCOUNTANT"
 
 
 class EncounterClass(str, Enum):
@@ -160,7 +164,12 @@ class ClinicalProfile(str, Enum):
 
 
 class AuditAction(str, Enum):
-    """Actions recorded in audit_log. The last three are required by the spec."""
+    """Actions recorded in audit_log.
+
+    The first block covers authentication and record lifecycle. The rest are
+    reserved for the AI, referral, billing, alert, FHIR and imaging flows, so
+    every sensitive action can leave a trace with a stable name.
+    """
 
     LOGIN = "LOGIN"
     LOGIN_FAILED = "LOGIN_FAILED"
@@ -171,6 +180,132 @@ class AuditAction(str, Enum):
     SOFT_DELETE = "SOFT_DELETE"
     RESTORE = "RESTORE"
     FHIR_SYNC = "FHIR_SYNC"
+    AI_ANALYSIS = "AI_ANALYSIS"
+    REPORT_APPROVED = "REPORT_APPROVED"
+    REPORT_REJECTED = "REPORT_REJECTED"
+    REFERRAL_CREATED = "REFERRAL_CREATED"
+    REFERRAL_ACCEPTED = "REFERRAL_ACCEPTED"
+    REFERRAL_REJECTED = "REFERRAL_REJECTED"
+    REFERRAL_COMPLETED = "REFERRAL_COMPLETED"
+    INVOICE_CREATED = "INVOICE_CREATED"
+    INVOICE_PAID = "INVOICE_PAID"
+    INVOICE_VOIDED = "INVOICE_VOIDED"
+    ALERT_CREATED = "ALERT_CREATED"
+    ALERT_ACKNOWLEDGED = "ALERT_ACKNOWLEDGED"
+    ALERT_ESCALATED = "ALERT_ESCALATED"
+    FHIR_EVENT_RECEIVED = "FHIR_EVENT_RECEIVED"
+    CLEANING_EVIDENCE = "CLEANING_EVIDENCE"
+    RECORD_VIEWED = "RECORD_VIEWED"
+    CLINICAL_RECORD_EXPORTED = "CLINICAL_RECORD_EXPORTED"
+    FHIR_IMPORT = "FHIR_IMPORT"
+    RESPONSIBLE_CHANGED = "RESPONSIBLE_CHANGED"
+
+
+class CleaningIsolation(str, Enum):
+    """Isolation precautions in force for the room being cleaned."""
+
+    NONE = "NONE"
+    CONTACT = "CONTACT"
+    DROPLET = "DROPLET"
+    SPORES = "SPORES"
+
+
+class CleaningDisinfectant(str, Enum):
+    CHLORINE_5000PPM = "CHLORINE_5000PPM"
+    QUATERNARY_AMMONIUM = "QUATERNARY_AMMONIUM"
+    SPORICIDAL = "SPORICIDAL"
+    OTHER = "OTHER"
+
+
+class CleaningReviewStatus(str, Enum):
+    """A cleaning record is evidence only once a person other than its author approves it."""
+
+    PENDING_REVIEW = "PENDING_REVIEW"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class AiReportKind(str, Enum):
+    """What an AI report is about. Only criticality exists today."""
+
+    CRITICALITY = "criticality"
+
+
+class AiReportStatus(str, Enum):
+    """Clinical sign-off state of an AI report (R10, "soft put").
+
+    Values are the Spanish ones of the public contract. Only an APPROVED report
+    reaches the clinical record; a REJECTED one is kept as evidence.
+    """
+
+    PENDING = "pendiente"
+    APPROVED = "aprobado"
+    REJECTED = "rechazado"
+
+
+class ReferralStatus(str, Enum):
+    """Life cycle of a referral (R08), values of the public Spanish contract.
+
+    ``pendiente`` -> ``aceptada`` -> ``completada``; the specialist may also
+    answer ``rechazada`` while it is still pending. Pending, accepted and
+    completed referrals grant the specialist access to the patient's record; a
+    rejected one grants nothing.
+    """
+
+    PENDING = "pendiente"
+    ACCEPTED = "aceptada"
+    COMPLETED = "completada"
+    REJECTED = "rechazada"
+
+
+class AlertKind(str, Enum):
+    """What raised an alert (R20)."""
+
+    CRITICAL_PATIENT = "paciente_critico"
+    BED_NOT_CLEANED = "cama_sin_limpiar"
+
+
+class AlertStatus(str, Enum):
+    """An alert stays ``activa`` until somebody acknowledges it (or, for beds,
+    until the cleaning is approved)."""
+
+    ACTIVE = "activa"
+    ACKNOWLEDGED = "reconocida"
+
+
+class CohortOrigin(str, Enum):
+    """Where a triage row of the cohort comes from."""
+
+    REAL = "REAL"
+    SYNTHETIC = "SYNTHETIC"
+
+
+class CohortZone(str, Enum):
+    """Distance of a cluster to the critical case, ranked by admission rate."""
+
+    FAR = "FAR"
+    INTERMEDIATE = "INTERMEDIATE"
+    NEAR = "NEAR"
+
+
+class ObservationOrigin(str, Enum):
+    """Where an observation row comes from.
+
+    ``local`` rows are entered in SaludRed and pushed to HAPI. ``fhir`` rows
+    arrived through the Subscription rest-hook and must never be pushed back.
+    ``import`` rows came from a FHIR Bundle uploaded by a user.
+    """
+
+    LOCAL = "local"
+    FHIR = "fhir"
+    IMPORT = "import"
+
+
+class FhirInboundOutcome(str, Enum):
+    """What the system did with a resource delivered by the FHIR server."""
+
+    PROCESSED = "processed"
+    UNKNOWN_PATIENT = "unknown_patient"
 
 
 class SyncStatus(str, Enum):

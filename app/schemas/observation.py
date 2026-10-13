@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
-from app.models.enums import ObservationStatus
+from app.models.enums import ObservationOrigin, ObservationStatus
 
 
 class ObservationBase(BaseModel):
@@ -69,6 +69,9 @@ class ObservationRead(ObservationBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    # Provenance: local, fhir (rest-hook) or import (uploaded Bundle).
+    origin: ObservationOrigin = ObservationOrigin.LOCAL
+    fhir_resource_id: str | None = None
     created_at: datetime
     updated_at: datetime
 

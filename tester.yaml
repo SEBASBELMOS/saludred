@@ -1,0 +1,265 @@
+# tester.yaml - Contrato de verificacion de SaludRed (Proyecto 2, Corte 2).
+#
+# BORRADOR: Ajustar a plantilla_equipo.yaml cuando el profesor la publique.
+# Los nombres de las secciones y de las claves siguen REQUISITOS.md, seccion 7;
+# si la plantilla oficial usa otra estructura, hay que trasladar estos mismos
+# valores a ella. Las rutas y los metodos fueron verificados contra
+# app/api/routes/.
+#
+# Convenciones de este archivo:
+#   - Todas las rutas cuelgan de la URL de la API (url_publica.api) o de la web
+#     (url_publica.web, que reenvia /api por nginx). Las dos sirven.
+#   - {patient_id}, {report_id}, {referral_id}, {alert_id} y {notification_id}
+#     son identificadores devueltos por llamadas anteriores.
+#   - Los campos de las respuestas cumplen la tabla de la seccion 7 de REQUISITOS.md.
+
+equipo:
+  nombre: SaludRed
+  descripcion: Coordinacion de camas hospitalarias en red EPS/IPS
+  repositorio: <URL del repositorio privado>
+
+# --------------------------------------------------------------------------
+# URL publica
+#
+# SaludRed se expone con Cloudflare Quick Tunnel (servicios tunnel-* de
+# docker-compose.yml, perfil "public"). Esas URLs CAMBIAN en cada reinicio de
+# los contenedores o de Docker, por eso aqui van como marcador de posicion.
+# Antes de cada evaluacion se leen de los registros de los tuneles y se
+# actualizan en este archivo:
+#   docker compose logs tunnel-web  | grep trycloudflare
+#   docker compose logs tunnel-api  | grep trycloudflare
+#   docker compose logs tunnel-fhir | grep trycloudflare
+# --------------------------------------------------------------------------
+url_publica:
+  web: https://<tunnel-web>.trycloudflare.com    # SPA y proxy de /api (nginx)
+  api: https://<tunnel-api>.trycloudflare.com    # API directa (Swagger en /docs)
+  fhir: https://<tunnel-fhir>.trycloudflare.com  # HAPI FHIR; el servidor vive bajo /fhir
+  # Si el tester solo admite una URL base, usar url_publica.web: nginx reenvia
+  # /api, /health y /docs hacia la API.
+
+# --------------------------------------------------------------------------
+# Autenticacion
+# --------------------------------------------------------------------------
+login:
+  metodo: POST
+  ruta: /api/v1/auth/login
+  cuerpo: {username: "<usuario>", password: "<clave>"}
+  campo_token: access_token      # el token va despues como: Authorization: Bearer <token>
+
+# --------------------------------------------------------------------------
+# Usuarios de prueba, uno por rol.
+# La clave de las cuentas de demo es la variable SEED_DEFAULT_PASSWORD del .env
+# del servidor; no se escribe aqui. Reemplazar el marcador antes de entregar a
+# un tester que no tenga acceso a ese .env.
+# --------------------------------------------------------------------------
+usuarios:
+  admin:
+    usuario: admin
+    clave: "<contraseña de demo>"
+    rol: admin
+  medico:
+    usuario: operador.norte
+    clave: "<contraseña de demo>"
+    rol: medico
+  especialista:
+    usuario: especialista.sur        # Hospital Sur: recibe remisiones de la IPS Norte
+    clave: "<contraseña de demo>"
+    rol: especialista
+  paciente:
+    usuario: paciente.demo
+    clave: "<contraseña de demo>"
+    rol: paciente
+  contable:
+    usuario: contable.eps
+    clave: "<contraseña de demo>"
+    rol: contable
+  # Cuenta desechable para R02 (bloqueo tras 3 intentos fallidos). El admin la
+  # desbloquea al terminar.
+  bloqueo:
+    usuario: demo.bloqueo
+    clave: "<contraseña de demo>"
+    rol: medico
+
+# --------------------------------------------------------------------------
+# Rutas del contrato (seccion 7 de REQUISITOS.md)
+# --------------------------------------------------------------------------
+rutas:
+  yo:                                  # {"rol": "...", ...}
+    metodo: GET
+    ruta: /api/v1/auth/me
+
+  ia_analizar:                         # 201 {"id": ..., "estado": "pendiente"}
+    metodo: POST
+    ruta: /api/v1/patients/{patient_id}/ai-analyses
+    cuerpo: {}                         # opcional: {"triage_level": 2}
+
+  ia_reporte:                          # {"id": ..., "estado": "pendiente" | "aprobado" | "rechazado"}
+    metodo: GET
+    ruta: /api/v1/ai-reports/{report_id}
+
+  ia_payload:                          # {"payload": {...}}: el JSON exacto enviado al modelo
+    metodo: GET
+    ruta: /api/v1/ai-reports/{report_id}/payload
+
+  historia:                            # lista "reportes_ia" (solo aprobados), cada uno con "id"
+    metodo: GET
+    ruta: /api/v1/patients/{patient_id}/clinical-record
+
+  historia_pdf:                        # Content-Type: application/pdf
+    metodo: GET
+    ruta: /api/v1/patients/{patient_id}/clinical-record.pdf
+
+  imagenes_paciente:
+    # Estudios de imagen del paciente en la forma del contrato:
+    # {"imagenes": [{"id": ...}, ...]}
+    # Las imagenes de un estudio: GET /api/v1/imaging-studies/{study_id}/images
+    # y su descarga (PNG): GET /api/v1/imaging/instances/{instance_id}/preview
+    metodo: GET
+    ruta: /api/v1/patients/{patient_id}/imagenes
+    descarga_imagen:
+      metodo: GET
+      ruta: /api/v1/imaging/instances/{instance_id}/preview
+
+  clusters:                            # [{"cluster","descripcion","n_reales","n_sinteticos", ...}]
+    metodo: GET
+    ruta: /api/v1/cohort/clusters      # solo staff clinico; contable y paciente reciben 403
+
+  remitir:                             # 201 {"id": ...}; solo el rol medico
+    metodo: POST
+    ruta: /api/v1/referrals
+    cuerpo: {paciente_id: "{patient_id}", especialista_id: "<id del especialista>", motivo: "<texto>"}
+    # El id del especialista sale de GET /api/v1/referrals/specialists (medico o admin).
+
+  remisiones:                          # lista de remisiones con "paciente_id"
+    metodo: GET
+    ruta: /api/v1/referrals            # el especialista ve las recibidas; el medico, las enviadas
+
+  remision_aceptar:                    # 200; estado -> "aceptada"; solo el especialista destinatario
+    metodo: POST
+    ruta: /api/v1/referrals/{referral_id}/accept
+
+  contable_listar:                     # lista de facturas con "paciente_id"; las automaticas llevan "reporte_id"
+    metodo: GET
+    ruta: /api/v1/facturas             # solo contable y admin; el medico recibe 403
+
+  notificaciones:                      # [{"id","tipo","mensaje","leida","fecha","paciente_id", ...}]
+    metodo: GET
+    ruta: /api/v1/notifications
+
+  notif_leer:                          # 200; "leida": true; solo su dueno (otro usuario: 404)
+    metodo: POST
+    ruta: /api/v1/notifications/{notification_id}/read
+
+  pendientes:                          # {"reportes_por_revisar","remisiones_recibidas","alertas_activas"}
+    metodo: GET
+    ruta: /api/v1/pendientes
+
+  alertas:                             # [{"id","paciente_id","nivel","estado": "activa" | "reconocida"}]
+    metodo: GET
+    ruta: /api/v1/alerts               # filtro opcional: ?estado=activa
+
+  alerta_reconocer:                    # 200; estado -> "reconocida"; la nota es obligatoria (422 si falta)
+    metodo: POST
+    ruta: /api/v1/alerts/{alert_id}/acknowledge
+    cuerpo: {nota: "<texto>"}
+
+  fhir_observation:                    # el servidor FHIR acepta un POST de Observation (2xx)
+    metodo: POST
+    base: fhir                         # se resuelve contra url_publica.fhir
+    ruta: /fhir/Observation
+    content_type: application/fhir+json
+
+  tiempo_real:
+    tipo: websocket
+    base: api                          # tambien funciona contra url_publica.web
+    ruta: /api/v1/events/ws
+    parametro_token: token             # wss://<host>/api/v1/events/ws?token=<jwt>
+    # Cada evento es un mensaje de texto con un JSON: id, tipo, mensaje, fecha,
+    # leida, paciente_id y datos.
+    ignorar:
+      - {tipo: ping}                   # latido de la aplicacion cada 15 s; no es una notificacion
+    # Sin token, con token invalido o con una cuenta bloqueada el servidor cierra
+    # con el codigo 4401.
+    espera_segundos: 15
+    # Por que 15: los eventos internos (remision, alerta, factura) llegan en 2 a
+    # 5 s, pero una Observation publicada en HAPI llega entre 5 y 9 s, porque
+    # HAPI 7.4 entrega las suscripciones con un planificador de 5 s fijo.
+    alternativa_red_local:
+      tipo: sse
+      ruta: /api/v1/events/stream      # solo red local: los tuneles rapidos de Cloudflare no entregan SSE
+
+# --------------------------------------------------------------------------
+# Rutas auxiliares que el tester necesita para armar los escenarios
+# --------------------------------------------------------------------------
+rutas_auxiliares:
+  crear_paciente:
+    metodo: POST
+    ruta: /api/v1/patients
+    cuerpo_ejemplo:
+      document_type: CC
+      document_number: "<documento unico>"
+      first_name: <nombre>
+      last_name: <apellido>
+      birth_date: "1948-01-15"
+      gender: male
+      eps_organization_id: "<id de la EPS>"
+  crear_encuentro:
+    metodo: POST
+    ruta: /api/v1/encounters
+  crear_observacion:
+    metodo: POST
+    ruta: /api/v1/observations
+  desbloquear_cuenta:                  # solo admin; R02
+    metodo: POST
+    ruta: /api/v1/admin/users/{user_id}/unlock
+  listar_cuentas:                      # solo admin
+    metodo: GET
+    ruta: /api/v1/admin/users
+  auditoria:                           # solo admin; medico recibe 403
+    metodo: GET
+    ruta: /api/v1/audit-logs
+  organizaciones:
+    metodo: GET
+    ruta: /api/v1/organizations
+  salud:
+    metodo: GET
+    ruta: /health
+  fhir_metadata:
+    metodo: GET
+    base: fhir
+    ruta: /fhir/metadata
+
+# --------------------------------------------------------------------------
+# Paciente critico (R20): valores clinicos que, con el modelo desplegado,
+# garantizan el disparo de la alerta (probabilidad ~0,999 contra un umbral de
+# 0,415 que se lee en GET /api/v1/ai/models). Fuente: docs/EVENTOS.md,
+# seccion "Contrato paciente_critico". El paciente debe tener 78 anos o mas
+# (birth_date 1948-01-15 o anterior) y las unidades deben ser exactamente estas.
+# Procedimiento: crear paciente, crear encuentro (EMER, in-progress) y una
+# observacion por fila, y llamar a ia_analizar con el medico.
+# --------------------------------------------------------------------------
+paciente_critico:
+  edad_anios: 78
+  sexo: male
+  observaciones:
+    - {code: "59408-5", display: "Oxygen saturation",         value_numeric: 86,   unit: "%"}
+    - {code: "8867-4",  display: "Heart rate",                value_numeric: 118,  unit: "/min"}
+    - {code: "8480-6",  display: "Systolic blood pressure",   value_numeric: 92,   unit: "mm[Hg]"}
+    - {code: "8462-4",  display: "Diastolic blood pressure",  value_numeric: 58,   unit: "mm[Hg]"}
+    - {code: "9279-1",  display: "Respiratory rate",          value_numeric: 28,   unit: "/min"}
+    - {code: "8310-5",  display: "Body temperature",          value_numeric: 38.9, unit: "Cel"}
+  resultado_esperado:
+    estado: pendiente
+    critico: true
+    nivel_alerta: critico
+
+# --------------------------------------------------------------------------
+# Observacion de glucosa para R21 (publicar en el servidor FHIR y esperar el
+# aviso en tiempo_real del medico responsable del paciente).
+# --------------------------------------------------------------------------
+observacion_fhir:
+  loinc: "2339-0"
+  descripcion: Glucose [Mass/volume] in Blood
+  unidad: mg/dL
+  valor_ejemplo: 182
+  referencia_paciente: "Patient/<id del paciente en HAPI>"   # tambien se resuelve por subject.identifier

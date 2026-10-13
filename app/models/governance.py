@@ -20,7 +20,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDPrimaryKeyMixin
-from app.models.enums import AuditAction, SyncStatus, enum_column
+from app.models.enums import (
+    AuditAction,
+    FhirInboundOutcome,
+    SyncStatus,
+    enum_column,
+)
 
 # Postgres is the production engine and JSONB is what it should use: it is
 # indexable and stored already parsed. The SQLite variant exists only so the
@@ -121,3 +126,51 @@ class FhirSyncLog(UUIDPrimaryKeyMixin, Base):
 
     def __repr__(self) -> str:
         return f"<FhirSyncLog {self.fhir_resource_type}:{self.fhir_resource_id}>"
+
+
+class FhirInboundEvent(UUIDPrimaryKeyMixin, Base):
+    """A resource delivered by the FHIR server, recorded exactly once.
+
+    The unique constraint on ``(resource type, resource id, version id)`` is
+    what makes the rest-hook idempotent: HAPI retries a delivery it believes
+    failed, and a second arrival of the same version must not store the
+    observation or notify the clinician again. The row is also the trail of
+    everything that entered with origin FHIR, including the deliveries that
+    could not be stored (unknown patient, patient without an encounter): the
+    original resource is kept in ``resource`` so no data is lost.
+    """
+
+    __tablename__ = "fhir_inbound_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "fhir_resource_type",
+            "fhir_resource_id",
+            "fhir_version_id",
+            name="uq_fhir_inbound_events_resource_version",
+        ),
+    )
+
+    fhir_resource_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    fhir_resource_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    fhir_version_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    outcome: Mapped[FhirInboundOutcome] = mapped_column(
+        enum_column(FhirInboundOutcome, "fhir_inbound_outcome"), nullable=False
+    )
+    patient_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("patients.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    observation_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("observations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    resource: Mapped[dict[str, Any]] = mapped_column(JSON_COLUMN, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<FhirInboundEvent {self.fhir_resource_type}/{self.fhir_resource_id}>"

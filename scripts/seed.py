@@ -119,6 +119,16 @@ ROLE_DEFINITIONS: list[tuple[RoleCode, str, str]] = [
         "Paciente",
         "Consulta unicamente su propia informacion clinica.",
     ),
+    (
+        RoleCode.SPECIALIST,
+        "Especialista",
+        "Recibe remisiones y atiende a los pacientes remitidos, dentro de su IPS.",
+    ),
+    (
+        RoleCode.ACCOUNTANT,
+        "Contable",
+        "Gestiona la facturacion; no accede a datos clinicos.",
+    ),
 ]
 
 IPS_DEFINITIONS: list[tuple[str, str, list[str]]] = [
@@ -268,11 +278,18 @@ def seed(reset: bool = False, patient_count: int = 16) -> None:
             _abort_if_populated(db)
 
         # -- Roles ---------------------------------------------------------
-        roles = {
-            code: Role(code=code, name=name, description=description)
-            for code, name, description in ROLE_DEFINITIONS
-        }
-        db.add_all(roles.values())
+        # Get-or-create: the migration that introduced SPECIALIST and
+        # ACCOUNTANT already inserts those rows, so a fresh database reaches
+        # the seed with them in place and inserting again would violate the
+        # unique constraint on roles.code.
+        existing_roles = {role.code: role for role in db.scalars(select(Role))}
+        roles = {}
+        for code, name, description in ROLE_DEFINITIONS:
+            role = existing_roles.get(code)
+            if role is None:
+                role = Role(code=code, name=name, description=description)
+                db.add(role)
+            roles[code] = role
         db.flush()
 
         # -- Network: one EPS coordinating three IPS ------------------------
@@ -312,7 +329,15 @@ def seed(reset: bool = False, patient_count: int = 16) -> None:
             role_id=roles[RoleCode.EPS_COORDINATOR].id,
             organization_id=eps.id,
         )
-        db.add_all([admin, coordinator])
+        accountant = User(
+            username="contable.eps",
+            full_name="Contable EPS SaludRed",
+            email="contabilidad@saludred.local",
+            password_hash=password_hash,
+            role_id=roles[RoleCode.ACCOUNTANT].id,
+            organization_id=eps.id,
+        )
+        db.add_all([admin, coordinator, accountant])
         db.flush()
 
         operators: dict[str, User] = {}
@@ -327,6 +352,17 @@ def seed(reset: bool = False, patient_count: int = 16) -> None:
             )
             db.add(operator)
             operators[ips.code] = operator
+            if ips.code == "IPS-NORTE":
+                db.add(
+                    User(
+                        username="especialista.norte",
+                        full_name=f"Especialista {ips.name}",
+                        email=f"especialista@{ips.code.lower()}.local",
+                        password_hash=password_hash,
+                        role_id=roles[RoleCode.SPECIALIST].id,
+                        organization_id=ips.id,
+                    )
+                )
         db.flush()
 
         # Authorship of the network itself belongs to the admin account.

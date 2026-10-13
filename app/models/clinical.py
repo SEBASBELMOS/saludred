@@ -20,6 +20,7 @@ from app.models.base import (
 from app.models.enums import (
     EncounterClass,
     EncounterStatus,
+    ObservationOrigin,
     ObservationStatus,
     Priority,
     enum_column,
@@ -143,6 +144,20 @@ class Observation(
     )
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
+    )
+
+    # Provenance. A row that came from the FHIR server (rest-hook) or from an
+    # imported Bundle is marked, so it is never pushed back to HAPI (that would
+    # duplicate it) and the record can show where each value comes from.
+    origin: Mapped[ObservationOrigin] = mapped_column(
+        enum_column(ObservationOrigin, "observation_origin"),
+        nullable=False,
+        default=ObservationOrigin.LOCAL,
+        server_default=ObservationOrigin.LOCAL.value,
+    )
+    # Id of the resource in the external system (HAPI id or Bundle identifier).
+    fhir_resource_id: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, index=True
     )
 
     patient: Mapped["Patient"] = relationship(

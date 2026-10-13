@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import CurrentUser, DbSession
+from app.core.authz import CONTRACT_ROLE_NAMES
 from app.core.config import get_settings
 from app.core.security import create_access_token
 from app.schemas.auth import CurrentUserRead, LoginRequest, TokenResponse
@@ -55,6 +56,7 @@ def me(user: CurrentUser) -> CurrentUserRead:
         username=user.username,
         full_name=user.full_name,
         role=user.role.code,
+        rol=CONTRACT_ROLE_NAMES[user.role.code],
         organization_id=user.organization_id,
         patient_id=user.patient_id,
     )

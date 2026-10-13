@@ -26,7 +26,34 @@ STAFF_ROLES = (
     RoleCode.ADMIN,
     RoleCode.EPS_COORDINATOR,
     RoleCode.IPS_CLINICAL_OPERATOR,
+    RoleCode.SPECIALIST,
 )
+
+# Roles that may create and edit encounters, observations and imaging studies.
+# Patients and bed requests are deliberately not part of this set.
+CLINICAL_WRITERS = (
+    RoleCode.ADMIN,
+    RoleCode.IPS_CLINICAL_OPERATOR,
+    RoleCode.SPECIALIST,
+)
+
+# Roles that request AI analyses and sign (approve or reject) their reports.
+# The AI proposes, a clinician decides: the network coordinator and the admin
+# can read reports but never sign them.
+AI_REVIEWERS = (RoleCode.IPS_CLINICAL_OPERATOR, RoleCode.SPECIALIST)
+
+# Roles bound to a single IPS: they never leave their institution.
+IPS_SCOPED_ROLES = (RoleCode.IPS_CLINICAL_OPERATOR, RoleCode.SPECIALIST)
+
+# Role names of the public contract (course vocabulary), used by /auth/me.
+CONTRACT_ROLE_NAMES = {
+    RoleCode.ADMIN: "admin",
+    RoleCode.IPS_CLINICAL_OPERATOR: "medico",
+    RoleCode.SPECIALIST: "especialista",
+    RoleCode.PATIENT: "paciente",
+    RoleCode.ACCOUNTANT: "contable",
+    RoleCode.EPS_COORDINATOR: "coordinador",
+}
 
 
 def require_role(user: User, *allowed: RoleCode) -> None:
@@ -57,7 +84,7 @@ def ensure_org_scope(user: User, organization_id: uuid.UUID | None) -> None:
     """Second question: institutional boundary.
 
     ADMIN and EPS_COORDINATOR see the whole network by definition of their
-    roles. An IPS_CLINICAL_OPERATOR must stay inside its own institution --
+    roles. An IPS_CLINICAL_OPERATOR or SPECIALIST must stay inside its own institution --
     having permission to *edit encounters* never implies permission to edit
     encounters of another IPS.
     """
@@ -87,11 +114,11 @@ def ensure_owner_or_admin(user: User, created_by: uuid.UUID | None) -> None:
 def org_filter_for(user: User) -> uuid.UUID | None:
     """Organization filter to apply to list queries.
 
-    ``None`` means "no restriction" (network-wide visibility). For the clinical
-    operator the filter is its own IPS: the restriction is applied inside the
+    ``None`` means "no restriction" (network-wide visibility). For the IPS-scoped
+    roles (operator and specialist) the filter is its own IPS: the restriction is applied inside the
     query, so a scoped user cannot even enumerate what it may not read.
     """
 
-    if user.role.code == RoleCode.IPS_CLINICAL_OPERATOR:
+    if user.role.code in IPS_SCOPED_ROLES:
         return user.organization_id
     return None

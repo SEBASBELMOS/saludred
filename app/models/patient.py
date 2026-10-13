@@ -76,8 +76,23 @@ class Patient(
         index=True,
     )
 
+    # Clinician who answers for the patient. Recipient of the reactive flows
+    # (R21 and Epic 7). Nullable on purpose: when unset, the recipients fall
+    # back to the clinicians of the IPS of the latest encounter, then admins.
+    # use_alter for the same reason as the authorship columns: users already
+    # points back at patients.
+    responsible_clinician_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+        index=True,
+    )
+
     eps_organization: Mapped["Organization"] = relationship(
         back_populates="affiliated_patients", foreign_keys=[eps_organization_id]
+    )
+    responsible_clinician: Mapped["User | None"] = relationship(
+        foreign_keys=[responsible_clinician_id], lazy="joined"
     )
     encounters: Mapped[list["Encounter"]] = relationship(
         back_populates="patient", foreign_keys="Encounter.patient_id"
@@ -92,6 +107,11 @@ class Patient(
     @property
     def full_name(self) -> str:
         return f"{self.first_name} {self.last_name}"
+
+    @property
+    def responsible_clinician_name(self) -> str | None:
+        clinician = self.responsible_clinician
+        return clinician.full_name if clinician is not None else None
 
     @property
     def business_identifier(self) -> str:
