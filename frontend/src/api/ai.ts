@@ -20,7 +20,11 @@ export interface AiReport {
   model_version: string;
   imputed: string[];
   top_features: AiFeature[];
-  requested_by: string;
+  // automatico: the system made it when the vitals were recorded; manual: someone asked for it.
+  origen: "automatico" | "manual";
+  encounter_id: string | null;
+  // Null for an automatic report.
+  requested_by: string | null;
   reviewed_by: string | null;
   firmado_por: string | null;
   reviewed_at: string | null;
@@ -134,11 +138,6 @@ export const aiApi = {
     filter: { patient_id?: string; estado?: AiReportStatus },
     signal?: AbortSignal,
   ) => api<AiReport[]>(`/ai-reports?${queryString(filter)}`, { signal }),
-  analyze: (patientId: string, triageLevel?: number) =>
-    api<AiReport>(`/patients/${patientId}/ai-analyses`, {
-      method: "POST",
-      body: triageLevel ? { triage_level: triageLevel } : {},
-    }),
   payload: (reportId: string, signal?: AbortSignal) =>
     api<{ payload: Record<string, unknown> }>(
       `/ai-reports/${reportId}/payload`,

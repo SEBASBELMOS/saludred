@@ -74,7 +74,8 @@ export function TopFeatures({ features }: { features: AiFeature[] }) {
                 {feature.contribution >= 0
                   ? "sube la probabilidad"
                   : "baja la probabilidad"}
-                {feature.imputed && "; valor típico, no medido"}
+                {feature.imputed &&
+                  "; estimado a partir de pacientes parecidos, no medido"}
               </span>
             </li>
           ))}
@@ -97,6 +98,9 @@ export function Signature({
   motivo?: string | null;
 }) {
   if (estado === "pendiente") return null;
+  // The clinician's judgment: the note of an approval, the reason of a rejection.
+  const concepto = estado === "aprobado" ? observaciones : motivo;
+  const extra = estado === "rechazado" ? observaciones : null;
   return (
     <>
       <div>
@@ -111,19 +115,33 @@ export function Signature({
           </span>
         </dd>
       </div>
-      {motivo && (
-        <div>
-          <dt className="text-xs text-ink-muted">Motivo del rechazo</dt>
-          <dd className="mt-1 break-words text-sm">{motivo}</dd>
-        </div>
-      )}
-      {observaciones && (
-        <div>
+      <div className="rounded-lg border border-line bg-surface-sunken p-3 sm:col-span-2">
+        <dt className="text-xs font-semibold text-ink-muted">Concepto clínico</dt>
+        <dd className="mt-1 whitespace-pre-line break-words text-sm font-semibold">
+          {concepto ?? (
+            <span className="font-normal text-ink-muted">
+              Sin concepto clínico registrado.
+            </span>
+          )}
+        </dd>
+      </div>
+      {extra && (
+        <div className="sm:col-span-2">
           <dt className="text-xs text-ink-muted">Observaciones</dt>
-          <dd className="mt-1 break-words text-sm">{observaciones}</dd>
+          <dd className="mt-1 break-words text-sm">{extra}</dd>
         </div>
       )}
     </>
+  );
+}
+const origenText = { automatico: "Automático", manual: "Manual" } as const;
+/** Who made the report: the system on its own, or a clinician's request. */
+export function OrigenChip({ origen }: { origen?: "automatico" | "manual" }) {
+  if (!origen) return null;
+  return (
+    <span className="inline-flex items-center whitespace-nowrap rounded-full border border-line px-2 py-0.5 text-xs text-ink-muted">
+      {origenText[origen]}
+    </span>
   );
 }
 export const imputedList = (keys: string[]) =>

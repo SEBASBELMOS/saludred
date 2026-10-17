@@ -122,7 +122,10 @@ export function PatientRecordDialog({
               }
             />
             <div className="mt-5">
-              <AiAnalysisSection patientId={patientId} />
+              <AiAnalysisSection
+                patientId={patientId}
+                observations={record.data.observations}
+              />
             </div>
             <div className="mt-5">
               <PatientReferrals patientId={patientId} />

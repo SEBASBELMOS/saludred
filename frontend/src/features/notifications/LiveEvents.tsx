@@ -64,6 +64,12 @@ export function applyLiveEvent(client: QueryClient, event: AppNotification) {
     invalidate(REFERRALS_KEY);
     return;
   }
+  // An automatic AI report was generated: it shows up in the patient drawer and
+  // in the pending list with no reload, and the counters follow.
+  if (event.tipo === "analisis_ia_pendiente") {
+    invalidate(["ai-reports"]);
+    invalidate(PENDING_KEY);
+  }
   if (event.tipo.startsWith("alerta_")) {
     if (event.tipo === "alerta_reconocida") {
       // The banner clears at once; the refetch confirms it.

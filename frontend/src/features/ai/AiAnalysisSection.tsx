@@ -6,96 +6,74 @@ import { useInvalidateClinical } from "../../api/query";
 import { dateTime } from "../../components/format";
 import {
   Action,
-  Field,
   FormActions,
   Loading,
   Notice,
   Panel,
-  SelectField,
   TextField,
   useToast,
 } from "../../components/ui";
 import { ErrorState } from "../../components/ErrorState";
 import { useAuth } from "../auth/AuthProvider";
 import { canReviewAi } from "../auth/permissions";
+import { vitalCatalog } from "../patients/validation";
 import { PayloadView } from "./PayloadView";
 import {
   EstadoChip,
+  OrigenChip,
   Probability,
   Signature,
   TopFeatures,
   imputedList,
 } from "./reportParts";
-export const unavailableMessage =
-  "El servicio de IA no responde. El reporte no se creó; intenta de nuevo en unos minutos.";
-export const missingDataMessage =
-  "Faltan datos clínicos para el análisis. Registra al menos 3 de estas mediciones: temperatura, frecuencia cardíaca, frecuencia respiratoria, saturación de oxígeno, presión sistólica o diastólica. Luego pide el análisis otra vez.";
 export const conflictMessage =
   "Otro clínico ya revisó este reporte. Actualizamos la lista para que veas su decisión.";
-export function requestErrorMessage(error: unknown) {
-  if (error instanceof ApiError) {
-    if (error.status === 503) return unavailableMessage;
-    if (error.status === 422) return missingDataMessage;
-    return error.message;
-  }
-  return "No se pudo pedir el análisis. Intenta de nuevo.";
-}
-const triageOptions = [
-  ["1", "1 (más urgente)"],
-  ["2", "2"],
-  ["3", "3"],
-  ["4", "4"],
-  ["5", "5 (menos urgente)"],
+export const conceptMinLength = 10;
+export const conceptTooShortMessage = `El concepto clínico debe tener al menos ${conceptMinLength} caracteres.`;
+export const autoStatusMessage =
+  "El análisis se genera automáticamente cuando el paciente tiene signos vitales registrados.";
+
+// The six vital signs the AI service waits for before it analyzes on its own.
+const coreVitalCodes = [
+  "8867-4",
+  "9279-1",
+  "59408-5",
+  "8480-6",
+  "8462-4",
+  "8310-5",
 ];
-function RequestAnalysis({ patientId }: { patientId: string }) {
-  const [triage, setTriage] = useState("");
-  const invalidate = useInvalidateClinical();
-  const toast = useToast();
-  const mutation = useMutation({
-    mutationFn: () =>
-      aiApi.analyze(patientId, triage ? Number(triage) : undefined),
-    onSuccess: async () => {
-      toast("Análisis creado. Queda pendiente hasta que lo firmes.");
-      await invalidate();
-    },
-  });
+interface Measured {
+  code: string;
+  value_numeric?: number | null;
+  status?: string;
+}
+/** Names of the core vital signs that have no usable measurement yet. */
+export function missingVitals(observations: Measured[]) {
+  const present = new Set(
+    observations
+      .filter((o) => o.value_numeric != null && o.status !== "cancelled")
+      .map((o) => o.code),
+  );
+  return coreVitalCodes
+    .filter((code) => !present.has(code))
+    .map(
+      (code) =>
+        vitalCatalog.find((vital) => vital.code === code)?.name.toLowerCase() ??
+        code,
+    );
+}
+// A quiet line, not a form: nobody asks for the analysis, it just appears.
+function AutoStatus({ observations }: { observations?: Measured[] }) {
+  const missing = observations ? missingVitals(observations) : [];
   return (
-    <form
-      className="border-b border-line px-5 py-4"
-      onSubmit={(event: FormEvent) => {
-        event.preventDefault();
-        mutation.mutate();
-      }}
+    <p
+      role="status"
+      className="border-b border-line px-5 py-3 text-xs text-ink-muted"
     >
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="w-56 max-w-full">
-          <SelectField
-            label="Nivel de triage ESI (opcional)"
-            value={triage}
-            onChange={(event) => setTriage(event.target.value)}
-          >
-            <option value="">Sin informar</option>
-            {triageOptions.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </SelectField>
-        </div>
-        <Action
-          type="submit"
-          label="Solicitar análisis"
-          loading={mutation.isPending}
-          disabled={mutation.isPending}
-        />
-      </div>
-      <p className="mt-2 text-xs text-ink-muted">
-        El análisis usa las últimas mediciones registradas. Si no informas el
-        nivel de triage, el modelo usa un valor típico y lo señala como
-        imputado.
-      </p>
-      {mutation.error && <Notice>{requestErrorMessage(mutation.error)}</Notice>}
-    </form>
+      {missing.length
+        ? `Faltan mediciones: ${missing.join(", ")}.`
+        : autoStatusMessage}
+    </p>
   );
 }
 type Decision = "approve" | "reject";
@@ -110,16 +88,19 @@ function ReviewForm({
   onClose: () => void;
   onConflict: () => void;
 }) {
-  const [motivo, setMotivo] = useState("");
-  const [observaciones, setObservaciones] = useState("");
+  // One required text per action: the clinician's judgment. On approval it is
+  // the note of the signature; on rejection it is the reason.
+  const [concept, setConcept] = useState("");
   const invalidate = useInvalidateClinical();
   const toast = useToast();
   const approving = decision === "approve";
+  const text = concept.trim();
+  const tooShort = text.length < conceptMinLength;
   const mutation = useMutation({
     mutationFn: () =>
       approving
-        ? aiApi.approve(report.id, observaciones.trim())
-        : aiApi.reject(report.id, motivo.trim(), observaciones.trim()),
+        ? aiApi.approve(report.id, text)
+        : aiApi.reject(report.id, text, ""),
     onSuccess: async (signed) => {
       toast(
         approving
@@ -138,53 +119,43 @@ function ReviewForm({
       }
     },
   });
-  const blocked = !approving && motivo.trim().length < 3;
   return (
     <form
       aria-label={approving ? "Aprobar reporte" : "Rechazar reporte"}
       className="rounded-lg bg-surface-sunken p-4"
       onSubmit={(event: FormEvent) => {
         event.preventDefault();
-        if (!blocked) mutation.mutate();
+        if (!tooShort) mutation.mutate();
       }}
     >
-      {approving ? (
-        <p className="mb-3 text-sm">
-          Al aprobar, el reporte entra a la historia clínica y su probabilidad
-          pasa a ser el puntaje de criticidad de la cola de camas, si el
-          paciente tiene una solicitud abierta.
-        </p>
-      ) : (
-        <>
-          <p className="mb-3 text-sm">
-            El rechazo no cambia la cola. El reporte queda como evidencia, fuera
-            de la historia clínica.
-          </p>
-          <Field
-            label="Motivo del rechazo"
-            value={motivo}
-            required
-            maxLength={500}
-            autoComplete="off"
-            onChange={(event) => setMotivo(event.target.value)}
-          />
-          <p className="mb-3 mt-1 text-xs text-ink-muted">
-            Escribe al menos 3 caracteres. Queda registrado con tu firma.
-          </p>
-        </>
-      )}
+      <p className="mb-3 text-sm">
+        {approving
+          ? "Al aprobar, el reporte entra a la historia clínica y su probabilidad pasa a ser el puntaje de criticidad de la cola de camas, si el paciente tiene una solicitud abierta."
+          : "El rechazo no cambia la cola. El reporte queda como evidencia, fuera de la historia clínica."}
+      </p>
       <TextField
-        label="Observaciones (opcional)"
-        value={observaciones}
-        maxLength={1000}
-        rows={3}
-        onChange={(event) => setObservaciones(event.target.value)}
+        label="Concepto clínico"
+        value={concept}
+        required
+        maxLength={approving ? 1000 : 500}
+        rows={4}
+        aria-invalid={concept.length > 0 && tooShort}
+        aria-describedby="concept-help"
+        onChange={(event) => setConcept(event.target.value)}
       />
+      <p
+        id="concept-help"
+        className={`mt-1 text-xs ${concept.length > 0 && tooShort ? "font-semibold text-critical-ink" : "text-ink-muted"}`}
+      >
+        {concept.length > 0 && tooShort
+          ? conceptTooShortMessage
+          : `Obligatorio. Escribe tu juicio clínico sobre este análisis (al menos ${conceptMinLength} caracteres). Queda registrado con tu firma.`}
+      </p>
       {mutation.error && <Notice>{mutation.error.message}</Notice>}
       <FormActions
         label={approving ? "Confirmar aprobación" : "Confirmar rechazo"}
         pending={mutation.isPending}
-        disabled={blocked}
+        disabled={tooShort}
         onClose={onClose}
       />
     </form>
@@ -205,8 +176,10 @@ function ReportItem({
     <li className="space-y-3 px-5 py-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <EstadoChip estado={report.estado} />
+        <OrigenChip origen={report.origen} />
         <time className="text-xs text-ink-muted tabular-nums">
-          Solicitado {dateTime(report.created_at)}
+          {report.origen === "manual" ? "Solicitado" : "Generado"}{" "}
+          {dateTime(report.created_at)}
         </time>
       </div>
       <Probability
@@ -276,9 +249,18 @@ function ReportItem({
     </li>
   );
 }
-export function AiAnalysisSection({ patientId }: { patientId: string }) {
+export function AiAnalysisSection({
+  patientId,
+  observations,
+}: {
+  patientId: string;
+  // The patient's measurements, to say which vital signs are still missing.
+  observations?: Measured[];
+}) {
   const { user } = useAuth();
   const canReview = canReviewAi(user!.role);
+  // Live events (analisis_ia_pendiente, pendientes_actualizados) invalidate the
+  // ["ai-reports"] prefix, so a report that arrives shows up here with no reload.
   const reports = useQuery({
     queryKey: ["ai-reports", "patient", patientId],
     queryFn: ({ signal }) => aiApi.reports({ patient_id: patientId }, signal),
@@ -288,7 +270,7 @@ export function AiAnalysisSection({ patientId }: { patientId: string }) {
       title="Análisis de IA"
       description="La IA sugiere; el reporte solo entra a la historia cuando un médico o especialista lo aprueba."
     >
-      {canReview && <RequestAnalysis patientId={patientId} />}
+      <AutoStatus observations={observations} />
       {reports.error ? (
         <ErrorState error={reports.error} retry={reports.refetch} />
       ) : !reports.data ? (
@@ -307,10 +289,8 @@ export function AiAnalysisSection({ patientId }: { patientId: string }) {
         </ul>
       ) : (
         <p className="px-5 py-6 text-sm text-ink-muted">
-          Este paciente no tiene análisis de IA.
-          {canReview
-            ? " Solicita uno para que el modelo sugiera su nivel de criticidad."
-            : " Los pide un médico o especialista de su IPS."}
+          Este paciente todavía no tiene análisis de IA. Aparece aquí solo, sin
+          recargar, apenas el sistema lo genera.
         </p>
       )}
     </Panel>

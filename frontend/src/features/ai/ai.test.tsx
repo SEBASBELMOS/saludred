@@ -1,14 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AiReport, ModelMetrics } from "../../api/ai";
 import type { Role } from "../../api/types";
 import { sessionToken } from "../../api/client";
+import { ToastProvider } from "../../components/ui";
 import { AuthProvider } from "../auth/AuthProvider";
 import { canDownloadRecord, canReviewAi } from "../auth/permissions";
+import { LiveEventsProvider } from "../notifications/LiveEvents";
 import { renderUi } from "../../test/render";
+import { FakeWebSocket } from "../../test/fakeSocket";
 import { patient, response, user } from "../../test/fixtures";
-import { AiAnalysisSection } from "./AiAnalysisSection";
+import {
+  AiAnalysisSection,
+  autoStatusMessage,
+  conceptTooShortMessage,
+} from "./AiAnalysisSection";
 import { ModelsSection, subgroupLabel } from "./ModelsSection";
 import { PendingReports } from "./PendingReports";
 import { RecordDownload } from "./RecordDownload";
@@ -28,7 +35,9 @@ const report: AiReport = {
     { feature: "o2sat", value: 88, contribution: 0.41, imputed: false },
     { feature: "acuity", value: 3, contribution: -0.12, imputed: true },
   ],
-  requested_by: "user-1",
+  origen: "automatico",
+  encounter_id: "encounter-1",
+  requested_by: null,
   reviewed_by: null,
   firmado_por: null,
   reviewed_at: null,
@@ -46,17 +55,13 @@ const payload = {
 };
 interface Stub {
   reports?: AiReport[];
-  analyze?: Response;
   review?: Response;
 }
 // Answers the endpoints the AI screens call and records every request.
 function stubApi(role: Role, stub: Stub = {}) {
   sessionToken.set("test-session");
-  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    const method = init?.method ?? "GET";
+  const fetch = vi.fn(async (url: string) => {
     if (url.endsWith("/auth/me")) return response({ ...user, role });
-    if (url.includes("/ai-analyses") && method === "POST")
-      return stub.analyze ?? response(report, 201);
     if (/\/ai-reports\/[^/]+\/(approve|reject)$/.test(url))
       return stub.review ?? response({ ...report, estado: "aprobado" });
     if (url.endsWith("/payload")) return response({ payload });
@@ -68,7 +73,9 @@ function stubApi(role: Role, stub: Stub = {}) {
   return fetch;
 }
 const posts = (fetch: ReturnType<typeof stubApi>) =>
-  fetch.mock.calls.filter(([, init]) => init?.method === "POST");
+  (fetch.mock.calls as unknown as [string, RequestInit?][]).filter(
+    ([, init]) => init?.method === "POST",
+  );
 const renderSection = () =>
   renderUi(
     <AuthProvider>
@@ -77,19 +84,19 @@ const renderSection = () =>
   );
 describe("role gating", () => {
   it.each(["IPS_CLINICAL_OPERATOR", "SPECIALIST"] as Role[])(
-    "lets %s request and review",
+    "lets %s review, and offers no way to request the analysis",
     async (role) => {
       stubApi(role);
       renderSection();
-      expect(
-        await screen.findByRole("button", { name: "Solicitar análisis" }),
-      ).toBeInTheDocument();
       expect(
         await screen.findByRole("button", { name: "Aprobar" }),
       ).toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Rechazar" }),
       ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Solicitar análisis" }),
+      ).toBeNull();
     },
   );
   it.each(["ADMIN", "EPS_COORDINATOR"] as Role[])(
@@ -160,7 +167,7 @@ describe("role gating", () => {
   });
 });
 describe("review", () => {
-  it("requires a reason to reject and sends it with the observations", async () => {
+  it("requires the clinical concept to reject and sends it as the reason", async () => {
     const fetch = stubApi("IPS_CLINICAL_OPERATOR", {
       review: response({ ...report, estado: "rechazado" }),
     });
@@ -169,39 +176,92 @@ describe("review", () => {
       await screen.findByRole("button", { name: "Rechazar" }),
     );
     const confirm = screen.getByRole("button", { name: "Confirmar rechazo" });
+    const concept = screen.getByLabelText("Concepto clínico");
+    expect(concept).toBeRequired();
     expect(confirm).toBeDisabled();
-    await userEvent.type(screen.getByLabelText("Motivo del rechazo"), "  ");
+    await userEvent.type(concept, "          ");
     expect(confirm).toBeDisabled();
-    await userEvent.type(
-      screen.getByLabelText("Motivo del rechazo"),
-      "Datos desactualizados",
-    );
-    await userEvent.type(
-      screen.getByLabelText("Observaciones (opcional)"),
-      "Repetir con signos nuevos",
-    );
+    await userEvent.type(concept, "Muy corto");
+    expect(confirm).toBeDisabled();
+    expect(screen.getByText(conceptTooShortMessage)).toBeInTheDocument();
+    await userEvent.clear(concept);
+    await userEvent.type(concept, "Datos desactualizados, repetir signos");
+    expect(screen.queryByText(conceptTooShortMessage)).toBeNull();
     expect(confirm).toBeEnabled();
     await userEvent.click(confirm);
     await waitFor(() => expect(posts(fetch)).toHaveLength(1));
     const [url, init] = posts(fetch)[0];
     expect(url).toBe("/api/v1/ai-reports/report-1/reject");
     expect(JSON.parse(String(init?.body))).toEqual({
-      motivo: "Datos desactualizados",
-      observaciones: "Repetir con signos nuevos",
+      motivo: "Datos desactualizados, repetir signos",
     });
   });
-  it("approves without a reason and says the score feeds the bed queue", async () => {
+  it("requires the clinical concept to approve and sends it as the note", async () => {
     const fetch = stubApi("SPECIALIST");
     renderSection();
     await userEvent.click(
       await screen.findByRole("button", { name: "Aprobar" }),
     );
     expect(screen.getByText(/cola de camas/)).toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Confirmar aprobación" }),
-    );
+    const confirm = screen.getByRole("button", {
+      name: "Confirmar aprobación",
+    });
+    const concept = screen.getByLabelText("Concepto clínico");
+    expect(concept).toBeRequired();
+    expect(confirm).toBeDisabled();
+    // Nine characters are not enough, and the form explains why.
+    await userEvent.type(concept, "123456789");
+    expect(confirm).toBeDisabled();
+    expect(screen.getByText(conceptTooShortMessage)).toBeInTheDocument();
+    await userEvent.type(concept, "0 y concuerda con la clínica");
+    expect(confirm).toBeEnabled();
+    await userEvent.click(confirm);
     await waitFor(() => expect(posts(fetch)).toHaveLength(1));
     expect(posts(fetch)[0][0]).toBe("/api/v1/ai-reports/report-1/approve");
+    expect(JSON.parse(String(posts(fetch)[0][1]?.body))).toEqual({
+      observaciones: "1234567890 y concuerda con la clínica",
+    });
+  });
+  it("never sends a review without the text, even on Enter", async () => {
+    const fetch = stubApi("SPECIALIST");
+    renderSection();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Aprobar" }),
+    );
+    await userEvent.type(screen.getByLabelText("Concepto clínico"), "corto{Enter}");
+    expect(posts(fetch)).toHaveLength(0);
+  });
+  it("shows the signed concept prominently with who signed and when", async () => {
+    stubApi("SPECIALIST", {
+      reports: [
+        {
+          ...report,
+          estado: "aprobado",
+          firmado_por: "Dr. Ricardo Torres",
+          reviewed_at: "2026-10-13T15:00:00Z",
+          observaciones: "Concuerda con la clínica y el examen físico",
+        },
+        {
+          ...report,
+          id: "report-2",
+          created_at: "2026-10-01T10:00:00Z",
+          estado: "rechazado",
+          firmado_por: "Dra. Ana Gómez",
+          reviewed_at: "2026-10-13T16:00:00Z",
+          motivo_rechazo: "No coincide con el examen físico",
+        },
+      ],
+    });
+    renderSection();
+    expect(await screen.findByText("Dr. Ricardo Torres")).toBeInTheDocument();
+    expect(
+      screen.getByText("Concuerda con la clínica y el examen físico"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Dra. Ana Gómez")).toBeInTheDocument();
+    expect(
+      screen.getByText("No coincide con el examen físico"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Concepto clínico")).toHaveLength(2);
   });
   it("tells the clinician when someone else already signed the report", async () => {
     stubApi("SPECIALIST", {
@@ -214,6 +274,10 @@ describe("review", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: "Aprobar" }),
     );
+    await userEvent.type(
+      screen.getByLabelText("Concepto clínico"),
+      "Concuerda con la clínica",
+    );
     await userEvent.click(
       screen.getByRole("button", { name: "Confirmar aprobación" }),
     );
@@ -222,55 +286,126 @@ describe("review", () => {
     ).toBeInTheDocument();
   });
 });
-describe("request an analysis", () => {
-  it("explains that nothing was created when the AI service is down", async () => {
-    stubApi("IPS_CLINICAL_OPERATOR", {
-      reports: [],
-      analyze: response(
-        { detail: "El servicio de IA no esta disponible" },
-        503,
-      ),
-    });
-    renderSection();
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Solicitar análisis" }),
+describe("automatic analysis", () => {
+  const vital = (code: string) => ({ code, value_numeric: 90 });
+  const allVitals = [
+    "8867-4",
+    "9279-1",
+    "59408-5",
+    "8480-6",
+    "8462-4",
+    "8310-5",
+  ].map(vital);
+  it("has no request button and no triage select, for any clinician", async () => {
+    for (const role of ["IPS_CLINICAL_OPERATOR", "SPECIALIST"] as Role[]) {
+      const fetch = stubApi(role, { reports: [] });
+      const view = renderSection();
+      expect(
+        await screen.findByText(/todavía no tiene análisis de IA/),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Solicitar/ })).toBeNull();
+      expect(screen.queryByLabelText(/triage/i)).toBeNull();
+      expect(screen.queryByRole("combobox")).toBeNull();
+      expect(posts(fetch)).toHaveLength(0);
+      view.unmount();
+    }
+  });
+  it("says the analysis is generated by itself when the vitals are recorded", async () => {
+    stubApi("SPECIALIST", { reports: [] });
+    renderUi(
+      <AuthProvider>
+        <AiAnalysisSection patientId={patient.id} observations={allVitals} />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText(autoStatusMessage)).toBeInTheDocument();
+    expect(screen.queryByText(/Faltan mediciones/)).toBeNull();
+    expect(autoStatusMessage).toBe(
+      "El análisis se genera automáticamente cuando el paciente tiene signos vitales registrados.",
+    );
+  });
+  it("lists the measurements that are still missing", async () => {
+    stubApi("SPECIALIST", { reports: [] });
+    renderUi(
+      <AuthProvider>
+        <AiAnalysisSection
+          patientId={patient.id}
+          observations={[
+            vital("8867-4"),
+            { code: "9279-1", value_numeric: null },
+            { code: "59408-5", value_numeric: 95, status: "cancelled" },
+            { code: "2339-0", value_numeric: 182 }, // glucose: not a core vital
+          ]}
+        />
+      </AuthProvider>,
     );
     expect(
       await screen.findByText(
-        "El servicio de IA no responde. El reporte no se creó; intenta de nuevo en unos minutos.",
+        "Faltan mediciones: frecuencia respiratoria, saturación de oxígeno, presión sistólica, presión diastólica, temperatura.",
       ),
     ).toBeInTheDocument();
+    expect(screen.queryByText(autoStatusMessage)).toBeNull();
   });
-  it("says which data to record when there is not enough", async () => {
+  it("labels each report as automatic or manual", async () => {
     stubApi("SPECIALIST", {
-      reports: [],
-      analyze: response(
-        { detail: "El paciente no tiene suficientes datos clinicos" },
-        422,
-      ),
+      reports: [
+        report,
+        {
+          ...report,
+          id: "report-2",
+          origen: "manual",
+          requested_by: "user-1",
+          created_at: "2026-10-01T10:00:00Z",
+        },
+      ],
     });
     renderSection();
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Solicitar análisis" }),
+    expect(await screen.findByText("Automático")).toBeInTheDocument();
+    expect(screen.getByText("Manual")).toBeInTheDocument();
+  });
+  it("shows a report that arrives on a live event, with no reload", async () => {
+    sessionToken.set("test-session");
+    const store = { reports: [] as AiReport[] };
+    const fetch = vi.fn(async (url: string) => {
+      if (url.endsWith("/auth/me"))
+        return response({ ...user, role: "IPS_CLINICAL_OPERATOR" });
+      if (url.includes("/ai-reports")) return response(store.reports);
+      if (url.includes("/notifications")) return response([]);
+      return response({}, 404);
+    });
+    vi.stubGlobal("fetch", fetch);
+    renderUi(
+      <AuthProvider>
+        <ToastProvider>
+          <LiveEventsProvider>
+            <AiAnalysisSection patientId={patient.id} />
+          </LiveEventsProvider>
+        </ToastProvider>
+      </AuthProvider>,
     );
     expect(
-      await screen.findByText(/Registra al menos 3 de estas mediciones/),
+      await screen.findByText(/todavía no tiene análisis de IA/),
     ).toBeInTheDocument();
-  });
-  it("sends the triage level only when one is chosen", async () => {
-    const fetch = stubApi("SPECIALIST", { reports: [] });
-    renderSection();
-    await userEvent.selectOptions(
-      await screen.findByLabelText("Nivel de triage ESI (opcional)"),
-      "2",
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => FakeWebSocket.last.open());
+
+    // The server made the report; the live event only tells the screen to look.
+    store.reports = [report];
+    act(() =>
+      FakeWebSocket.last.receive({
+        id: "note-1",
+        tipo: "analisis_ia_pendiente",
+        mensaje: "Nuevo análisis de IA pendiente de firma: María Pérez",
+        leida: false,
+        fecha: "2026-10-13T15:00:00Z",
+        paciente_id: patient.id,
+        datos: { reporte_id: "report-1", origen: "automatico" },
+      }),
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Solicitar análisis" }),
-    );
-    await waitFor(() => expect(posts(fetch)).toHaveLength(1));
-    expect(JSON.parse(String(posts(fetch)[0][1]?.body))).toEqual({
-      triage_level: 2,
-    });
+    expect(await screen.findByText("87,4 %")).toBeInTheDocument();
+    expect(screen.getByText("Automático")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/todavía no tiene análisis de IA/),
+    ).toBeNull();
   });
 });
 describe("report details", () => {
@@ -285,6 +420,16 @@ describe("report details", () => {
     expect(
       screen.getByText("Variables imputadas").nextSibling,
     ).toHaveTextContent("Nivel de triage ESI");
+  });
+  it("describes an imputed variable as an estimate from similar patients", async () => {
+    stubApi("SPECIALIST");
+    renderSection();
+    expect(
+      await screen.findByText(
+        /estimado a partir de pacientes parecidos, no medido/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/valor típico/)).toBeNull();
   });
   it("shows the exact payload sent to the model in plain words and as raw JSON", async () => {
     stubApi("SPECIALIST");

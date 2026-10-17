@@ -45,7 +45,7 @@ function Row({
         <span className="text-xs text-ink-muted">
           {patient.data &&
             `${patient.data.document_type} ${patient.data.document_number}, `}
-          solicitado{" "}
+          {report.origen === "manual" ? "solicitado" : "generado"}{" "}
           <span className="tabular-nums">{dateTime(report.created_at)}</span>
         </span>
       </div>
@@ -119,7 +119,8 @@ export function PendingReports() {
             <strong className="font-semibold text-ink">
               No hay reportes por revisar.
             </strong>{" "}
-            Cuando se pida un análisis de IA, aparece aquí hasta que se firme.
+            Cuando el sistema genere un análisis de IA, aparece aquí hasta que
+            se firme.
           </p>
         )}
       </Panel>
