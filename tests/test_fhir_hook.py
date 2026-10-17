@@ -8,13 +8,14 @@ payload against ``{endpoint}/Observation/{id}``) and check what the system does.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import func, select
 
 from app.models import AuditLog, FhirInboundEvent, Notification, Observation, Patient
 from app.models.enums import AuditAction, ObservationOrigin
-from app.services import ml_client  # noqa: F401
+from app.services import fhir_inbound, ml_client  # noqa: F401
 from tests.fhir_helpers import (
     HOOK,
     FakeFhir,
@@ -241,6 +242,59 @@ def test_patient_resolved_by_project_identifier(scene) -> None:
     )
     assert response.status_code == 200
     assert len(_inbox(client_as, "operador.norte")) == 1
+
+
+def _identifier_put(client, value: str, obs_id: str = "obs-ident"):
+    resource = glucose("Patient/ignored", obs_id=obs_id)
+    resource["subject"] = {"identifier": {"value": value}}  # no system: what a plain client sends
+    return client.put(f"{HOOK}/Observation/{obs_id}", json=resource, headers=hook_headers())
+
+
+@pytest.mark.parametrize("form", ["uuid", "number", "typed"])
+def test_a_system_less_identifier_resolves_the_patient(scene, form) -> None:
+    db, client_as, patient, _fhir_id = scene
+    value = {
+        "uuid": patient["id"],
+        "number": CANARY["document_number"],
+        "typed": f"CC-{CANARY['document_number']}",
+    }[form]
+    assert fhir_inbound.patient_by_identifier(db, None, value).id == uuid.UUID(patient["id"])
+    assert _identifier_put(client_as("admin"), value).status_code == 200
+    assert len(_inbox(client_as, "operador.norte")) == 1
+
+
+def test_a_system_less_identifier_that_matches_two_patients_stays_unknown(scene) -> None:
+    db, client_as, patient, _fhir_id = scene
+    eps = db.scalar(select(Patient)).eps_organization_id
+    twin = client_as("operador.norte").post(
+        "/api/v1/patients",
+        json={**CANARY, "document_type": "TI", "email": "gemelo@canario.test",
+              "eps_organization_id": str(eps)},
+    )
+    assert twin.status_code == 201, twin.text
+    number = CANARY["document_number"]
+    assert fhir_inbound.patient_by_identifier(db, None, number) is None  # CC and TI share it
+    assert fhir_inbound.patient_by_identifier(db, None, f"CC-{number}").id == uuid.UUID(patient["id"])
+
+    assert _identifier_put(client_as("admin"), number).status_code == 200
+    assert _inbox(client_as, "operador.norte") == []
+    entry = db.scalar(select(AuditLog).where(AuditLog.action == AuditAction.FHIR_EVENT_RECEIVED))
+    assert entry.metadata_json["outcome"] == "unknown_patient"
+
+
+@pytest.mark.parametrize("form", ["uuid", "number", "typed"])
+def test_a_deleted_patient_does_not_resolve_by_a_system_less_identifier(scene, form) -> None:
+    db, client_as, patient, _fhir_id = scene
+    value = {
+        "uuid": patient["id"],
+        "number": CANARY["document_number"],
+        "typed": f"CC-{CANARY['document_number']}",
+    }[form]
+    row = db.get(Patient, uuid.UUID(patient["id"]))
+    row.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    assert fhir_inbound.patient_by_identifier(db, None, value) is None
+    assert fhir_inbound.patient_by_identifier(db, "urn:other:system", value) is None  # unchanged
 
 
 # -- recipients -------------------------------------------------------------

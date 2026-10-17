@@ -136,10 +136,18 @@ def resolve_patient(db: Session, subject: SubjectRef | None) -> Patient | None:
 def patient_by_identifier(
     db: Session, system: str | None, value: str
 ) -> Patient | None:
-    """Find a patient by one of the project's identifier systems."""
+    """Find a patient by one of the project's identifier systems.
+
+    Without a ``system`` (what a plain client sends) the value is tried as the
+    API patient UUID, then as a bare document number, then as ``<type>-<number>``;
+    the first form that matches decides, and a form matching several patients is
+    ambiguous, so the patient stays unknown rather than guessed.
+    """
 
     prefix = get_settings().fhir_identifier_system
     base = select(Patient).where(Patient.deleted_at.is_(None))
+    if not system:
+        return _patient_by_bare_value(db, base, value.strip())
     if system == f"{prefix}:documento":
         doc_type, _, number = value.partition("-")
         try:
@@ -161,6 +169,31 @@ def patient_by_identifier(
     matches = list(db.scalars(stmt.limit(2)).unique())
     # A bare number can repeat across document types: ambiguous is unknown.
     return matches[0] if len(matches) == 1 else None
+
+
+def _patient_by_bare_value(db: Session, base: Select[tuple[Patient]], value: str) -> Patient | None:
+    attempts: list[Select[tuple[Patient]]] = []
+    try:
+        attempts.append(base.where(Patient.id == uuid.UUID(value)))
+    except ValueError:
+        pass
+    attempts.append(base.where(Patient.document_number == value))
+    doc_type, _, number = value.partition("-")
+    if number:
+        try:
+            attempts.append(
+                base.where(
+                    Patient.document_type == DocumentType(doc_type),
+                    Patient.document_number == number,
+                )
+            )
+        except ValueError:
+            pass
+    for stmt in attempts:
+        matches = list(db.scalars(stmt.limit(2)).unique())
+        if matches:
+            return matches[0] if len(matches) == 1 else None
+    return None
 
 
 # ---------------------------------------------------------------------------

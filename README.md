@@ -195,7 +195,7 @@ los demás flujos llegan en 2 a 5 s.
 | Migraciones | Alembic |
 | Autenticación | JWT (HS256) · hashing bcrypt |
 | Interoperabilidad | HAPI FHIR R4 (v7.4.0) |
-| Imágenes médicas | Orthanc (PACS DICOM), perfil opcional |
+| Imágenes médicas | Orthanc (PACS DICOM) |
 | Contabilidad | MongoDB 7 · pymongo |
 | Inteligencia artificial | Servicio `ml` (FastAPI · scikit-learn, regresión logística) |
 | Tiempo real | WebSocket (público) y Server-Sent Events (red local) |
@@ -222,13 +222,13 @@ los demás flujos llegan en 2 a 5 s.
 | R13 Auditoría | `app/services/trail.py`, `app/api/routes/audit.py` | [`docs/NORMATIVA.md`](docs/NORMATIVA.md) |
 | R14 Borrado lógico y restauración | `app/services/soft_ops.py` | [`docs/modelo-datos-y-fhir.md`](docs/modelo-datos-y-fhir.md) |
 | R15 Interoperabilidad FHIR | `app/fhir/`, `app/services/fhir_autosync.py`, `app/api/routes/integration.py` | [`docs/INTEROPERABILIDAD.md`](docs/INTEROPERABILIDAD.md) |
-| R16 SPA reactiva | `frontend/` | `frontend/PARIDAD.md` |
+| R16 SPA reactiva | `frontend/` | [Desarrollo del frontend](#desarrollo-del-frontend) |
 | R17 Canal en tiempo real | `app/events/channel.py`, `app/api/routes/events.py`, `frontend/nginx.conf` | [`docs/EVENTOS.md`](docs/EVENTOS.md) |
 | R18 Bandeja y trabajo pendiente | `app/api/routes/notifications.py`, `app/services/pending.py`, `GET /api/v1/pendientes` | [`docs/EVENTOS.md`](docs/EVENTOS.md) |
 | R19 Flujos automáticos | `app/events/`, `app/billing/reactors.py` | [`docs/EVENTOS.md`](docs/EVENTOS.md) |
 | R20 Alertas críticas con reconocimiento | `app/services/alerts.py`, `app/services/alert_monitor.py`, `app/api/routes/alerts.py` | [`docs/EVENTOS.md`](docs/EVENTOS.md) |
 | R21 Interoperabilidad reactiva | `app/api/routes/fhir_hooks.py`, `app/services/fhir_inbound.py`, `scripts/ensure_fhir_subscription.py` | [`docs/EVENTOS.md`](docs/EVENTOS.md) |
-| R22 Documentación y sustentación | `docs/`, `tester.yaml` | [`docs/NORMATIVA.md`](docs/NORMATIVA.md), [`docs/DOCUMENTO_TECNICO.md`](docs/DOCUMENTO_TECNICO.md) |
+| R22 Documentación y sustentación | `docs/`, `tester.yaml` | [`docs/NORMATIVA.md`](docs/NORMATIVA.md), [`docs/IA.md`](docs/IA.md) |
 
 El contrato de verificación automática está en [`tester.yaml`](tester.yaml).
 
@@ -361,8 +361,7 @@ npm run dev
 ```
 
 Vite sirve la interfaz en `http://localhost:5173` y reenvía `/api` a `http://localhost:8000`. En despliegue, el
-contenedor `web` compila con Node y sirve `dist/` con nginx. El inventario de paridad con la interfaz anterior
-está en [`frontend/PARIDAD.md`](frontend/PARIDAD.md).
+contenedor `web` compila con Node y sirve `dist/` con nginx.
 
 ### PACS de imágenes (opcional)
 
@@ -402,8 +401,7 @@ docker compose exec api python -m scripts.smoke_api                # prueba de h
 docker compose exec -e SMOKE_FHIR=1 api python -m scripts.smoke_api   # incluye la integración FHIR
 ```
 
-Resultado de referencia (07/10/2026): 614 pruebas de la API, 29 del servicio `ml` y 269 del frontend, en verde.
-La estrategia de pruebas está en [`docs/DOCUMENTO_TECNICO.md`](docs/DOCUMENTO_TECNICO.md).
+Resultado de referencia (13/10/2026): 644 pruebas de la API, 39 del servicio `ml` y 274 del frontend, en verde.
 
 ## Autenticación, roles y usuarios de prueba
 
@@ -483,7 +481,6 @@ docker compose exec api python -m scripts.seed --reset --patients 400  # volumen
 
 | Documento | Contenido |
 |---|---|
-| [`docs/DOCUMENTO_TECNICO.md`](docs/DOCUMENTO_TECNICO.md) | Documento técnico: contexto, decisiones de arquitectura, seguridad, modelos, pruebas y limitaciones |
 | [`docs/NORMATIVA.md`](docs/NORMATIVA.md) | Norma, artículo o principio, control técnico y evidencia |
 | [`docs/EVENTOS.md`](docs/EVENTOS.md) | Catálogo de eventos, canal en vivo, alertas, escalamiento y `Subscription` de FHIR |
 | [`docs/IA.md`](docs/IA.md) | Seudonimización, firma clínica, modelos, umbrales y sesgo por subgrupo |
@@ -493,7 +490,6 @@ docker compose exec api python -m scripts.seed --reset --patients 400  # volumen
 | [`docs/modelo-datos-y-fhir.md`](docs/modelo-datos-y-fhir.md) | Modelo de datos y mapeo hacia FHIR |
 | [`docs/diagramas.md`](docs/diagramas.md) | Diagramas de arquitectura, entidad-relación, sincronización y control de acceso |
 | [`docs/postman/`](docs/postman/) | Colección de Postman de organizaciones (sin credenciales) |
-| [`frontend/PARIDAD.md`](frontend/PARIDAD.md) | Inventario de paridad del frontend |
 | [`tester.yaml`](tester.yaml) | Contrato de verificación automática |
 
 ## Capturas
@@ -536,10 +532,10 @@ La correspondencia con la Ley 1581 de 2012, la Ley 2015 de 2020 y las resolucion
 
 ## Estado y limitaciones
 
-Prototipo académico funcional. Limitaciones principales (detalle en
-[`docs/DOCUMENTO_TECNICO.md`](docs/DOCUMENTO_TECNICO.md)):
+Prototipo académico funcional. Limitaciones principales (detalle en [`docs/IA.md`](docs/IA.md) y
+[`docs/NORMATIVA.md`](docs/NORMATIVA.md)):
 
-- El modelo de criticidad es modesto (AUC 0,64 sobre 192 visitas reales de un solo hospital); es un apoyo que
+- El modelo de criticidad es modesto (AUC 0,623 sobre 192 visitas reales de un solo hospital); es un apoyo que
   un clínico firma, no un diagnóstico.
 - Los túneles rápidos de Cloudflare no entregan SSE (el canal público es WebSocket) y cambian de URL en cada
   reinicio.

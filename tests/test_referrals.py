@@ -14,7 +14,7 @@ from app.core.config import get_settings
 from app.fhir import mappers
 from app.models import Referral
 from app.models.enums import AuditAction, ReferralStatus
-from app.services import fhir_autosync
+from app.services import fhir_autosync, pacs
 from tests.fhir_helpers import FakeFhir
 from tests.reactive_helpers import (
     REFERRALS,
@@ -28,8 +28,15 @@ from tests.test_ai_reports import _analyze, _create_patient, ml  # noqa: F401
 from tests.test_bed_rules import _user, client_as, db  # noqa: F401
 
 
+PACS_STUDY = "dddddddd-11111111-22222222-33333333-44444444"
+PACS_INSTANCE = "eeeeeeee-11111111-22222222-33333333-44444444"
+
+
 @pytest.fixture
-def scene(db, client_as, ml):
+def scene(db, client_as, ml, monkeypatch):
+    monkeypatch.setattr(
+        pacs, "list_instances", lambda _study: [{"instance_id": PACS_INSTANCE, "number": 1}]
+    )
     patient = _create_patient(db, client_as)
     sur = add_specialist(db, username="especialista.sur", org_code="IPS-SUR")
     otro = add_specialist(db, username="especialista.otro", org_code="IPS-SUR")
@@ -154,7 +161,7 @@ def _open_to(client, patient_id: str, report_id: str, study_id: uuid.UUID) -> No
     assert client.get(f"/api/v1/encounters?patient_id={patient_id}").json()["total"] == 1
     assert client.get(f"/api/v1/patients/{patient_id}/imaging-studies").json()["total"] == 1
     images = client.get(f"/api/v1/patients/{patient_id}/imagenes").json()["imagenes"]
-    assert [i["id"] for i in images] == [str(study_id)]
+    assert [(i["id"], i["estudio_id"]) for i in images] == [(PACS_INSTANCE, str(study_id))]
     assert client.get(f"/api/v1/imaging-studies?patient_id={patient_id}").json()["total"] == 1
     assert client.get(f"/api/v1/imaging-studies/{study_id}").status_code == 200
     assert client.get(f"/api/v1/imaging-studies/{study_id}/images").status_code == 200
@@ -169,7 +176,10 @@ def _record_with_an_approved_report(db, client_as, patient):  # noqa: ANN001
     report = _analyze(medico, patient["id"]).json()
     assert medico.post(f"/api/v1/ai-reports/{report['id']}/approve").status_code == 200
     org = _user(db, "operador.norte").organization_id
-    return report["id"], add_study(db, patient["id"], org).id
+    study = add_study(db, patient["id"], org)
+    study.pacs_study_id = PACS_STUDY  # the pixels "live" in the (faked) PACS
+    db.commit()
+    return report["id"], study.id
 
 
 def test_a_referral_opens_the_whole_record_to_the_specialist(scene) -> None:

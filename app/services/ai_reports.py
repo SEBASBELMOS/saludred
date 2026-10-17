@@ -36,7 +36,7 @@ from app.models.enums import AiReportKind, AiReportOrigin, AiReportStatus, Audit
 from app.models.identity import User
 from app.models.patient import Patient
 from app.schemas.ai import AiReportRead
-from app.services import ml_client, patient_access, pseudonymization, trail
+from app.services import ml_client, patient_access, patient_locks, pseudonymization, trail
 from app.services.beds import OPEN_STATUSES
 from app.services.errors import (
     ConflictError,
@@ -177,13 +177,22 @@ def count_clinical_inputs(payload: dict[str, object]) -> int:
     return len([name for name in pseudonymization.CLINICAL_FIELDS if name in payload])
 
 
+ANY_STATUS = tuple(AiReportStatus)
+
+
 def pending_with_payload(
-    db: Session, patient_id: uuid.UUID, payload: dict[str, object]
+    db: Session,
+    patient_id: uuid.UUID,
+    payload: dict[str, object],
+    *,
+    statuses: tuple[AiReportStatus, ...] = (AiReportStatus.PENDING,),
 ) -> AiReport | None:
-    """A PENDING report of the patient whose stored payload equals ``payload``.
+    """A report of the patient (PENDING by default) whose stored payload equals ``payload``.
 
     Asking again for the same analysis changes nothing: there is already a
     report waiting for a signature that was made from exactly this input.
+    ``statuses`` widens the look-up for the automatic path: it must not remake
+    a report that a clinician already signed or rejected with no new data.
     """
 
     candidates = db.scalars(
@@ -191,7 +200,7 @@ def pending_with_payload(
         .where(
             AiReport.patient_id == patient_id,
             AiReport.kind == AiReportKind.CRITICALITY,
-            AiReport.status == AiReportStatus.PENDING,
+            AiReport.status.in_(statuses),
         )
         .order_by(AiReport.created_at.desc())
         .limit(20)
@@ -323,15 +332,19 @@ def request_analysis(
             f"(se necesitan al menos {MIN_CLINICAL_INPUTS} variables y hay {given})"
         )
 
-    existing = pending_with_payload(db, patient.id, payload)
-    if existing is not None:
-        return get_report(db, existing.id)
+    # Shared with the automatic worker: if it is storing the report for this very
+    # input right now, wait for its commit and return that report instead of
+    # making a second one. The look-up is repeated inside the lock on purpose.
+    with patient_locks.patient_lock(patient.id):
+        existing = pending_with_payload(db, patient.id, payload)
+        if existing is not None:
+            return get_report(db, existing.id)
 
-    # Network call first: if it fails, nothing has been written.
-    answer = ml_client.get_client().predict_criticality(payload)
-    report = store_report(
-        db, patient, payload=payload, answer=answer, actor=actor, origin=AiReportOrigin.MANUAL
-    )
+        # Network call first: if it fails, nothing has been written.
+        answer = ml_client.get_client().predict_criticality(payload)
+        report = store_report(
+            db, patient, payload=payload, answer=answer, actor=actor, origin=AiReportOrigin.MANUAL
+        )
     announce_generated(db, report)
     return get_report(db, report.id)
 

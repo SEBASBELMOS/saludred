@@ -338,3 +338,185 @@ def test_without_a_configured_password_the_pacs_is_reported_unavailable(monkeypa
     status = pacs.system_status()
     assert status.available is False
     assert "ORTHANC_PASSWORD" in status.detail
+
+
+# ---------------------------------------------------------------------------
+# GET /patients/{id}/imagenes: downloadable images (R06 contract)
+# ---------------------------------------------------------------------------
+
+
+def _with_pixels(db: Session, username: str = "operador.norte") -> ImagingStudy:
+    study = _study_of(db, username)
+    study.pacs_study_id = STUDY
+    db.commit()
+    return study
+
+
+def test_the_image_list_gives_instance_ids_and_working_urls(
+    db: Session, client_as, orthanc: FakeOrthanc
+) -> None:
+    study = _with_pixels(db)
+    client = client_as("operador.norte")
+    response = client.get(f"/api/v1/patients/{study.patient_id}/imagenes")
+    assert response.status_code == 200, response.text
+    (image,) = response.json()["imagenes"]
+    assert image["id"] == REWRITTEN  # an instance id, not a study id
+    assert image["id"] != str(study.id)
+    assert image["url"] == f"/api/v1/imaging/instances/{REWRITTEN}/preview"
+    assert image["url_absoluta"] == f"http://testserver{image['url']}"
+    assert image["estudio_id"] == str(study.id)
+    assert image["modalidad"] == study.modality.value
+    assert image["fecha"] is not None and image["tipo_contenido"] == "image/png"
+
+    # Following the url (same token) downloads the image.
+    download = client.get(image["url"])
+    assert download.status_code == 200
+    assert download.headers["content-type"] == "image/png"
+    assert download.content == PREVIEW
+
+
+def test_the_absolute_url_honours_the_forwarded_scheme(
+    db: Session, client_as, orthanc: FakeOrthanc
+) -> None:
+    study = _with_pixels(db)
+    response = client_as("operador.norte").get(
+        f"/api/v1/patients/{study.patient_id}/imagenes",
+        headers={"X-Forwarded-Proto": "https", "Host": "api.example.test"},
+    )
+    (image,) = response.json()["imagenes"]
+    assert image["url_absoluta"] == f"https://api.example.test{image['url']}"
+
+
+def test_a_study_without_pixels_or_gone_from_the_pacs_is_not_listed(
+    db: Session, client_as, orthanc: FakeOrthanc
+) -> None:
+    study = _study_of(db, "operador.norte")  # registered only: no pacs_study_id
+    client = client_as("operador.norte")
+    assert client.get(f"/api/v1/patients/{study.patient_id}/imagenes").json() == {"imagenes": []}
+    assert orthanc.calls == []
+
+    study.pacs_study_id = "ffffffff-11111111-22222222-33333333-44444444"  # the PACS answers 404
+    db.commit()
+    assert client.get(f"/api/v1/patients/{study.patient_id}/imagenes").json() == {"imagenes": []}
+
+
+def test_the_image_list_respects_scope_and_roles(
+    db: Session, client_as, orthanc: FakeOrthanc
+) -> None:
+    study = _with_pixels(db)
+    url = f"/api/v1/patients/{study.patient_id}/imagenes"
+    # Another IPS: nothing leaves the database, and the download is a 404 (not 403).
+    assert client_as("operador.sur").get(url).json() == {"imagenes": []}
+    assert client_as("operador.sur").get(
+        f"/api/v1/imaging/instances/{REWRITTEN}/preview"
+    ).status_code == 404
+    # Roles outside the clinical staff.
+    assert client_as("contable.eps").get(url).status_code == 403
+    # Unknown patient.
+    assert client_as("operador.norte").get(
+        "/api/v1/patients/00000000-0000-0000-0000-000000000001/imagenes"
+    ).status_code == 404
+
+
+def test_a_patient_lists_only_their_own_images(
+    db: Session, client_as, orthanc: FakeOrthanc
+) -> None:
+    study = _linked_study(db)
+    client = client_as("paciente.demo")
+    (image,) = client.get(f"/api/v1/patients/{study.patient_id}/imagenes").json()["imagenes"]
+    assert client.get(image["url"]).status_code == 200
+
+    other = db.scalar(select(Patient).where(Patient.id != study.patient_id).limit(1))
+    assert client.get(f"/api/v1/patients/{other.id}/imagenes").status_code == 404
+
+
+def test_the_image_list_answers_503_when_the_pacs_is_down(
+    db: Session, client_as, orthanc: FakeOrthanc
+) -> None:
+    study = _with_pixels(db)
+    orthanc.down = True
+    response = client_as("operador.norte").get(f"/api/v1/patients/{study.patient_id}/imagenes")
+    assert response.status_code == 503
+    assert "servidor de imagenes" in response.json()["detail"]
+
+
+def _clone_studies(db: Session, study: ImagingStudy, count: int) -> list[str]:
+    """``count`` more studies of the same patient, each with its own PACS study id."""
+
+    ids = []
+    for i in range(count):
+        pacs_id = f"{i + 1:08x}-11111111-22222222-33333333-44444444"
+        db.add(
+            ImagingStudy(
+                patient_id=study.patient_id,
+                organization_id=study.organization_id,
+                study_instance_uid=f"1.2.840.7777.{i + 1}",
+                accession_number=f"CLONE-{i + 1}",
+                modality=study.modality,
+                status=study.status,
+                body_site="Torax",
+                series_count=1,
+                instance_count=1,
+                started_at=study.started_at,
+                pacs_study_id=pacs_id,
+            )
+        )
+        ids.append(pacs_id)
+    db.commit()
+    return ids
+
+
+def test_a_patient_with_more_than_twenty_studies_loses_no_images(
+    db: Session, client_as, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    study = _study_of(db, "operador.norte")
+    _clone_studies(db, study, 24)
+    monkeypatch.setattr(
+        pacs, "list_instances", lambda study_id: [{"instance_id": f"i-{study_id}", "number": 1}]
+    )
+    response = client_as("operador.norte").get(f"/api/v1/patients/{study.patient_id}/imagenes")
+    assert response.status_code == 200
+    ids = [i["id"] for i in response.json()["imagenes"]]
+    assert len(ids) >= 24 and len(set(ids)) == len(ids)  # past the old default page of 20
+
+
+def test_one_failing_study_is_skipped_but_all_failing_is_a_503(
+    db: Session, client_as, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    study = _study_of(db, "operador.norte")
+    bad, good = _clone_studies(db, study, 2)
+    study.pacs_study_id = None  # the registered-only original has no pixels
+    db.commit()
+
+    def flaky(study_id: str) -> list[dict[str, object]]:
+        if study_id == bad:
+            raise PacsUnavailableError("El servidor de imagenes respondio HTTP 500")
+        return [{"instance_id": "ok-instance", "number": 1}]
+
+    monkeypatch.setattr(pacs, "list_instances", flaky)
+    client = client_as("operador.norte")
+    url = f"/api/v1/patients/{study.patient_id}/imagenes"
+    response = client.get(url)
+    assert response.status_code == 200
+    assert [i["id"] for i in response.json()["imagenes"]] == ["ok-instance"]
+
+    def broken(_study_id: str) -> list[dict[str, object]]:
+        raise PacsUnavailableError("El servidor de imagenes no responde: ConnectError")
+
+    monkeypatch.setattr(pacs, "list_instances", broken)
+    assert client.get(url).status_code == 503
+    assert good  # silence unused: both ids were created
+
+
+def test_a_spoofed_forwarded_header_or_host_never_reaches_url_absoluta(
+    db: Session, client_as, orthanc: FakeOrthanc
+) -> None:
+    study = _with_pixels(db)
+    url = f"/api/v1/patients/{study.patient_id}/imagenes"
+    client = client_as("operador.norte")
+
+    (image,) = client.get(url, headers={"X-Forwarded-Proto": "javascript"}).json()["imagenes"]
+    assert image["url_absoluta"] == f"http://testserver{image['url']}"
+
+    (image,) = client.get(url, headers={"Host": "evil.test/x?y=1"}).json()["imagenes"]
+    assert image["url_absoluta"] is None and image["url"].startswith("/api/v1/imaging/")

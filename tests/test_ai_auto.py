@@ -8,6 +8,7 @@ assertion is deterministic. The AI service is the ``FakeMl`` of the R10 tests.
 
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -24,10 +25,10 @@ from app.core.database import get_db
 from app.core.security import create_access_token
 from app.events.channel import registry
 from app.main import app
-from app.models import AiReport, Alert, AuditLog, Encounter, Observation, Patient
+from app.models import AiReport, Alert, AuditLog, Encounter, Observation, Patient, User
 from app.models.enums import AiReportOrigin, AiReportStatus, AuditAction
 from app.schemas.observation import ObservationCreate
-from app.services import ai_auto, ai_reports, alert_monitor, ml_client
+from app.services import ai_auto, ai_reports, alert_monitor, ml_client, patient_locks
 from app.services import observations as observations_service
 from app.services.errors import ConflictError
 from tests.fhir_helpers import HOOK, FakeFhir, glucose, hook_headers, sync_patient_to_fake
@@ -279,7 +280,69 @@ def test_the_sweep_query_compiles_for_postgres() -> None:
     assert "NOT (EXISTS" in text or "NOT EXISTS" in text
     assert "GROUP BY encounters.id" in text and "HAVING max(observations.created_at) <=" in text
     assert "encounters.ended_at IS NULL" in text and "patients.deleted_at IS NULL" in text
+    assert "ai_reports.created_at >= usable.last_usable" in text  # covered encounters are skipped
     assert "LIMIT" in text
+
+
+def _quiet_encounter(db, client_as, n: int) -> dict:  # noqa: ANN001
+    """A patient with an open encounter and three vitals (enough for the fallback, not for the trigger)."""
+
+    client = client_as("operador.norte")
+    org = _user(db, "operador.norte").organization_id
+    eps = db.scalars(select(Patient)).first().eps_organization_id
+    created = client.post(
+        "/api/v1/patients",
+        json={
+            "document_type": "CC", "document_number": f"7100{n:06d}", "first_name": f"Quieto{n}",
+            "last_name": "Barrido", "birth_date": "1961-03-09", "gender": "male",
+            "eps_organization_id": str(eps),
+        },
+    )
+    assert created.status_code == 201, created.text
+    patient = created.json()
+    encounter = client.post(
+        "/api/v1/encounters",
+        json={
+            "patient_id": patient["id"], "organization_id": str(org), "encounter_class": "EMER",
+            "status": "in-progress", "priority": "URGENT", "reason_text": "Observacion",
+            "started_at": datetime(2026, 10, 1, 8, 0, tzinfo=timezone.utc).isoformat(),
+        },
+    )
+    assert encounter.status_code == 201, encounter.text
+    patient["encounter_id"] = encounter.json()["id"]
+    for vital in (CORE[1], CORE[2], CORE[3]):
+        _post_vital(client, patient, vital)
+    return patient
+
+
+def test_encounters_already_covered_by_a_report_do_not_starve_the_ones_due(auto) -> None:
+    db, client_as, _patient, ml = auto
+    covered = [_quiet_encounter(db, client_as, n) for n in range(ai_auto.MAX_PER_SWEEP)]
+    doctor = client_as("operador.norte")
+    for i, patient in enumerate(covered):
+        # Manual report for the first half, signed for the rest: neither is an automatic one.
+        report = _analyze(doctor, patient["id"]).json()
+        if i % 2:
+            assert doctor.post(f"/api/v1/ai-reports/{report['id']}/approve").status_code == 200
+    due = _quiet_encounter(db, client_as, 99)  # the newest: last in the ORDER BY
+    calls_before = len(ml.criticality_calls)
+    assert calls_before == ai_auto.MAX_PER_SWEEP
+
+    now = datetime.now(timezone.utc) + timedelta(minutes=3)
+    cutoff, since = now - timedelta(seconds=120), now - timedelta(minutes=60)
+    assert list(db.scalars(ai_auto.due_encounters_stmt(cutoff=cutoff, since=since))) == [
+        uuid.UUID(due["encounter_id"])
+    ]
+
+    # One sweep reaches the encounter that is really due.
+    assert _tick(db, minutes=3)["ia_automaticos"] == 1
+    assert len(ml.criticality_calls) == calls_before + 1
+    assert ai_auto._has_automatic_report(db, uuid.UUID(due["encounter_id"]))
+
+    # No repeated work: nothing is due any more and further ticks call nothing.
+    assert list(db.scalars(ai_auto.due_encounters_stmt(cutoff=cutoff, since=since))) == []
+    assert _tick(db, minutes=4)["ia_automaticos"] == 0
+    assert len(ml.criticality_calls) == calls_before + 1
 
 
 # ---------------------------------------------------------------------------
@@ -542,6 +605,135 @@ def test_the_judgment_text_is_in_the_record_json_and_the_pdf(db, client_as, ml, 
     assert pdf.status_code == 200
     assert b"Concepto clinico: " + NOTE.encode() in pdf.content
     assert signed["firmado_por"].encode("latin-1", "replace") in pdf.content
+
+
+# ---------------------------------------------------------------------------
+# Auto worker and manual route firing together (one pending report, R18 counter)
+# ---------------------------------------------------------------------------
+
+
+class GatedMl(FakeMl):
+    """The first model call announces itself and waits, so the test decides
+    when the path that holds the patient lock may finish."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def predict_criticality(self, payload: dict) -> dict:
+        self.entered.set()
+        assert self.release.wait(10), "the test never released the model"
+        return super().predict_criticality(payload)
+
+
+def _wait_until(condition, *, seconds: float = 10.0) -> None:  # noqa: ANN001
+    deadline = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < deadline, "timed out waiting for the other thread"
+        time.sleep(0.01)
+
+
+@pytest.mark.parametrize("first", ["auto", "manual"])
+def test_auto_and_manual_firing_together_leave_one_pending_report(
+    db, client_as, ml, monkeypatch, first
+) -> None:
+    patient = _create_patient(db, client_as)  # six core vitals + glucose; automation is off
+    patient_id, encounter_id = uuid.UUID(patient["id"]), uuid.UUID(patient["encounter_id"])
+    doctor = client_as("operador.norte")
+    base = doctor.get("/api/v1/pendientes").json()["reportes_por_revisar"]
+
+    gated = GatedMl()
+    ml_client.set_client(gated)
+    # Reactors write to the (single, shared) SQLite connection of the test; they
+    # are not what is under test.
+    monkeypatch.setattr(ai_reports, "announce_generated", lambda _db, _report: None)
+    monkeypatch.setattr(ai_auto, "_tell_the_clinician", lambda _db, _patient, _report: None)
+
+    factory = sessionmaker(bind=db.get_bind(), expire_on_commit=False)
+    doctor_id = _user(db, "operador.norte").id
+    results: dict[str, object] = {}
+    errors: list[BaseException] = []
+    done = {"auto": threading.Event(), "manual": threading.Event()}
+
+    def automatic(session):  # noqa: ANN001, ANN202
+        return ai_auto.analyze_encounter(session, encounter_id)
+
+    def manual(session):  # noqa: ANN001, ANN202
+        return ai_reports.request_analysis(
+            session, session.get(Patient, patient_id), actor=session.get(User, doctor_id)
+        )
+
+    def run(name: str, work, other: str) -> None:  # noqa: ANN001
+        try:
+            with factory() as session:
+                results[name] = work(session)
+                done[name].set()
+                # One shared connection: do not close (roll back) while the other
+                # thread is still using it.
+                assert done[other].wait(10)
+        except BaseException as exc:  # noqa: BLE001 -- surfaced by the assertion below
+            errors.append(exc)
+            done[name].set()
+
+    works = {"auto": (automatic, "manual"), "manual": (manual, "auto")}
+    second = "manual" if first == "auto" else "auto"
+    t_first = threading.Thread(target=run, args=(first, *works[first]))
+    t_second = threading.Thread(target=run, args=(second, *works[second]))
+
+    t_first.start()
+    _wait_until(gated.entered.is_set)  # the first path is inside the model call, lock held
+    t_second.start()
+    _wait_until(lambda: patient_locks.users(patient_id) == 2)  # the second one waits for the lock
+    assert not done[second].is_set()
+    gated.release.set()
+    t_first.join(15)
+    t_second.join(15)
+    assert not errors, errors
+
+    (report,) = _reports(db)
+    assert report.status == AiReportStatus.PENDING
+    assert len(gated.criticality_calls) == 1, "the second path must not call the model again"
+    if first == "auto":
+        assert report.origin == AiReportOrigin.AUTOMATIC
+        assert results["manual"].id == report.id  # the manual call returns the automatic report
+    else:
+        assert report.origin == AiReportOrigin.MANUAL
+        assert results["auto"] is None  # the worker backs off: the manual report exists
+        assert results["manual"].id == report.id
+    assert patient_locks.users(patient_id) == 0, "lock entries are dropped when idle"
+
+    # R18: one report to review, and approving it brings the counter back.
+    assert doctor.get("/api/v1/pendientes").json()["reportes_por_revisar"] == base + 1
+    assert doctor.post(f"/api/v1/ai-reports/{report.id}/approve").status_code == 200
+    assert doctor.get("/api/v1/pendientes").json()["reportes_por_revisar"] == base
+
+
+def test_a_different_payload_still_creates_its_own_manual_report(auto) -> None:
+    db, client_as, patient, _ml = auto
+    doctor = client_as("operador.norte")
+    for vital in CORE:
+        _post_vital(doctor, patient, vital)
+    (automatic,) = _reports(db)
+    other = _analyze(doctor, patient["id"], triage_level=2).json()
+    assert other["id"] != str(automatic.id) and other["origen"] == "manual"
+    assert len(_reports(db)) == 2
+
+
+def test_the_worker_does_not_remake_a_report_already_signed_for_the_same_input(
+    db, client_as, ml
+) -> None:
+    """A manual report approved before the worker ran must not come back as a new
+    automatic pending report (it would put the R18 counter one above where it was)."""
+
+    patient = _create_patient(db, client_as)  # six core vitals; automation is off
+    doctor = client_as("operador.norte")
+    manual = _analyze(doctor, patient["id"]).json()
+    assert doctor.post(f"/api/v1/ai-reports/{manual['id']}/approve").status_code == 200
+
+    assert ai_auto.analyze_encounter(db, uuid.UUID(patient["encounter_id"])) is None
+    assert [str(r.id) for r in _reports(db)] == [manual["id"]]
+    assert len(ml.criticality_calls) == 1
 
 
 def test_an_unsigned_automatic_report_is_not_in_the_record(auto) -> None:

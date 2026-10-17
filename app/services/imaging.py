@@ -7,6 +7,7 @@ and a PACS already knows how to index by patient, study and series.
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from sqlalchemy import Select, func, or_, select
@@ -17,8 +18,16 @@ from app.models.enums import ImagingModality, ImagingStudyStatus
 from app.models.identity import User
 from app.models.imaging import ImagingStudy
 from app.schemas.imaging import ImagingStudyCreate, ImagingStudyUpdate
-from app.services import soft_ops
-from app.services.errors import ConflictError, NotFoundError, commit
+from app.services import pacs, soft_ops
+from app.services.errors import (
+    ConflictError,
+    InvalidUploadError,
+    NotFoundError,
+    PacsUnavailableError,
+    commit,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def list_studies(
@@ -203,6 +212,61 @@ def attach_pacs_study(
     commit(db)
     db.refresh(study)
     return study
+
+
+PREVIEW_PATH = "/api/v1/imaging/instances/{instance_id}/preview"
+
+
+def downloadable_images(
+    studies: list[ImagingStudy], *, base_url: str | None = None
+) -> list[dict[str, object]]:
+    """One element per image that can really be downloaded, for the verification contract.
+
+    ``id`` is the PACS instance id, the same one the download route
+    (:data:`PREVIEW_PATH`, a PNG) takes, so following ``id`` or ``url`` always
+    reaches the pixels. A study without pixels in the PACS contributes nothing
+    (there is nothing to download); one the PACS no longer knows is skipped.
+    A PACS failure on one study is logged and that study skipped; only when the
+    PACS fails for every study that has pixels does ``PacsUnavailableError``
+    propagate (HTTP 503 with a Spanish message): then there is nothing to list.
+    """
+
+    images: list[dict[str, object]] = []
+    attempted = 0
+    failure: Exception | None = None
+    failed = 0
+    for study in studies:
+        if not study.pacs_study_id:
+            continue
+        attempted += 1
+        try:
+            instances = pacs.list_instances(study.pacs_study_id)
+        except NotFoundError:
+            continue
+        except (PacsUnavailableError, InvalidUploadError) as exc:
+            logger.warning("PACS failed listing study %s: %s", study.id, exc)
+            failed += 1
+            failure = exc
+            continue
+        for instance in instances:
+            path = PREVIEW_PATH.format(instance_id=instance["instance_id"])
+            images.append(
+                {
+                    "id": instance["instance_id"],
+                    "url": path,
+                    "url_absoluta": f"{base_url.rstrip('/')}{path}" if base_url else None,
+                    "estudio_id": str(study.id),
+                    "modalidad": getattr(study.modality, "value", study.modality),
+                    "fecha": study.started_at.isoformat() if study.started_at else None,
+                    "numero": instance["number"],
+                    "tipo_contenido": "image/png",
+                }
+            )
+    if failure is not None and failed == attempted:
+        if isinstance(failure, PacsUnavailableError):
+            raise failure
+        raise PacsUnavailableError(str(failure)) from failure
+    return images
 
 
 def find_by_pacs_study(db: Session, pacs_study_id: str) -> ImagingStudy:

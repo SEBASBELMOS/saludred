@@ -9,6 +9,7 @@ the API is what makes both possible.
 
 from __future__ import annotations
 
+import re
 import uuid
 
 from fastapi import APIRouter, Query, Request, Response, status
@@ -182,12 +183,64 @@ def patient_studies(
     summary="Imagenes de un paciente (forma del contrato de verificacion)",
 )
 def patient_images(
-    db: DbSession, user: CurrentUser, params: PageQuery, patient_id: uuid.UUID
-) -> dict[str, list[ImagingStudyRead]]:
-    """Same data and rules as ``patient_studies``, in the contract's shape."""
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
+    patient_id: uuid.UUID,
+) -> dict[str, list[dict[str, object]]]:
+    """Downloadable images of a patient, in the contract's shape.
 
-    page = patient_studies(db, user, params, patient_id)
-    return {"imagenes": page.items}
+    Each element is an image in the PACS, not a study: ``id`` is the instance id
+    and ``url`` the path that downloads it (``GET /imaging/instances/{id}/preview``,
+    a PNG, same bearer token). ``url_absoluta`` adds the public base of the request.
+    Scope is that of the patient's studies: own IPS plus patients referred to a
+    specialist; whatever is out of scope is simply not listed. A patient account
+    lists only its own images (another patient's id answers 404). The list is
+    not paginated: it covers the patient's most recent ``IMAGES_MAX_STUDIES``
+    (100) studies. If the PACS is down the answer is 503 with a message in
+    Spanish, never a 500; a failure on a single study just skips that study.
+    """
+
+    if user.role.code == RoleCode.PATIENT:
+        if user.patient_id != patient_id:
+            raise NotFoundError("Paciente no encontrado")
+        studies, _total = imaging_service.list_studies(
+            db, page=1, page_size=IMAGES_MAX_STUDIES, patient_id=patient_id
+        )
+    else:
+        authz.require_staff(user)
+        patients_service.get_patient(db, patient_id)
+        studies, _total = imaging_service.list_studies(
+            db,
+            page=1,
+            page_size=IMAGES_MAX_STUDIES,
+            patient_id=patient_id,
+            organization_id=authz.org_filter_for(user),
+            granted_patients=patient_access.referred_patient_ids(user),
+        )
+    return {"imagenes": imaging_service.downloadable_images(studies, base_url=_public_base(request))}
+
+
+IMAGES_MAX_STUDIES = 100  # same cap as the front (frontend/src/api/imaging.ts)
+_HOST = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:\d{1,5})?$")
+
+
+def _public_base(request: Request) -> str | None:
+    """Scheme and host the client used, for ``url_absoluta``.
+
+    Both come from headers a client (or a proxy) can set, so each is checked:
+    only ``http``/``https`` is accepted for the scheme (else the server's own),
+    and the host must be a plain ``host[:port]``; otherwise there is no absolute
+    variant (``None``) and the relative ``url`` is all the response offers.
+    """
+
+    scheme = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    if scheme not in ("http", "https"):
+        scheme = request.url.scheme
+    host = (request.headers.get("host") or "").strip()
+    if not _HOST.match(host):
+        return None
+    return f"{scheme}://{host}"
 
 
 # ---------------------------------------------------------------------------

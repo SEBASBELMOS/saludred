@@ -1,11 +1,5 @@
 # tester.yaml - Contrato de verificacion de SaludRed (Proyecto 2, Corte 2).
 #
-# BORRADOR: Ajustar a plantilla_equipo.yaml cuando el profesor la publique.
-# Los nombres de las secciones y de las claves siguen REQUISITOS.md, seccion 7;
-# si la plantilla oficial usa otra estructura, hay que trasladar estos mismos
-# valores a ella. Las rutas y los metodos fueron verificados contra
-# app/api/routes/.
-#
 # Convenciones de este archivo:
 #   - Todas las rutas cuelgan de la URL de la API (url_publica.api) o de la web
 #     (url_publica.web, que reenvia /api por nginx). Las dos sirven.
@@ -14,15 +8,16 @@
 #   - Los campos de las respuestas cumplen la tabla de la seccion 7 de REQUISITOS.md.
 
 equipo:
+  id: grupo-02          
   nombre: SaludRed
   descripcion: Coordinacion de camas hospitalarias en red EPS/IPS
-  repositorio: <URL del repositorio privado>
+  repositorio: https://github.com/SEBASBELMOS/saludred
 
 # --------------------------------------------------------------------------
 # URL publica
 #
 # SaludRed se expone con Cloudflare Quick Tunnel (servicios tunnel-* de
-# docker-compose.yml, perfil "public"). Esas URLs CAMBIAN en cada reinicio de
+# docker-compose.yml; arrancan con el resto). Esas URLs CAMBIAN en cada reinicio de
 # los contenedores o de Docker, por eso aqui van como marcador de posicion.
 # Antes de cada evaluacion se leen de los registros de los tuneles y se
 # actualizan en este archivo:
@@ -48,35 +43,38 @@ login:
 
 # --------------------------------------------------------------------------
 # Usuarios de prueba, uno por rol.
-# La clave de las cuentas de demo es la variable SEED_DEFAULT_PASSWORD del .env
-# del servidor; no se escribe aqui. Reemplazar el marcador antes de entregar a
-# un tester que no tenga acceso a ese .env.
+# Son cuentas exclusivas del tester (tester.*), separadas de las que usa el
+# equipo en la demostracion en vivo, para que las pruebas automaticas no
+# llenen de avisos ni bloqueen las cuentas de la demo. Medico, especialista y
+# bloqueo trabajan en Centro Medico Central; la demo usa Clinica Norte.
+# La clave es la variable SEED_DEFAULT_PASSWORD del .env del servidor; no se
+# escribe aqui. Reemplazar el marcador al entregar el archivo al profesor.
 # --------------------------------------------------------------------------
 usuarios:
   admin:
-    usuario: admin
+    usuario: tester.admin
     clave: "<contraseña de demo>"
     rol: admin
   medico:
-    usuario: operador.norte
+    usuario: tester.medico
     clave: "<contraseña de demo>"
     rol: medico
   especialista:
-    usuario: especialista.sur        # Hospital Sur: recibe remisiones de la IPS Norte
+    usuario: tester.especialista
     clave: "<contraseña de demo>"
     rol: especialista
   paciente:
-    usuario: paciente.demo
+    usuario: tester.paciente         # paciente propio "Tester Paciente", CC 9900009901
     clave: "<contraseña de demo>"
     rol: paciente
   contable:
-    usuario: contable.eps
+    usuario: tester.contable
     clave: "<contraseña de demo>"
     rol: contable
   # Cuenta desechable para R02 (bloqueo tras 3 intentos fallidos). El admin la
   # desbloquea al terminar.
   bloqueo:
-    usuario: demo.bloqueo
+    usuario: tester.bloqueo
     clave: "<contraseña de demo>"
     rol: medico
 
@@ -88,11 +86,32 @@ rutas:
     metodo: GET
     ruta: /api/v1/auth/me
 
-  ia_analizar:                         # 201 {"id": ..., "estado": "pendiente"}. La app lo hace sola;
-                                       # repetirlo con un reporte pendiente identico devuelve ese mismo reporte
+  ia_analizar:                         # 201 {"id": ..., "estado": "pendiente"}. La app lo hace sola al
+                                       # registrar el sexto signo vital. Repetirlo mientras haya un reporte
+                                       # pendiente con el mismo payload (tambien si el automatico esta en
+                                       # curso: un candado por paciente los ordena) devuelve ESE reporte y no
+                                       # crea otro. Un payload distinto (otro triage_level) crea un reporte nuevo.
     metodo: POST
     ruta: /api/v1/patients/{patient_id}/ai-analyses
     cuerpo: {}                         # opcional: {"triage_level": 2}
+
+  ia_aprobar:                          # 200 {"id","estado": "aprobado"}; solo medico o especialista
+    metodo: POST                       # (paciente y contable reciben 403); 409 si ya fue revisado.
+    ruta: /api/v1/ai-reports/{report_id}/approve
+    cuerpo: {observaciones: "<concepto clinico, opcional>"}
+    # "observaciones" pasa a ser obligatoria (minimo 10 caracteres, 422 si falta) cuando
+    # REQUIRE_REVIEW_NOTE=true; en el sistema desplegado esta en false.
+    # Con un texto de 10 o mas caracteres funciona en ambos casos. Igual para "motivo" en ia_rechazar.
+    # Al aprobar se crea sola la factura (R19) con "reporte_id" y baja "reportes_por_revisar".
+
+  ia_rechazar:                         # 200 {"id","estado": "rechazado"}; el reporte queda como evidencia
+    metodo: POST
+    ruta: /api/v1/ai-reports/{report_id}/reject
+    cuerpo: {motivo: "<texto, minimo 3 caracteres>", observaciones: "<opcional>"}
+
+  ia_reportes:                         # lista de reportes del alcance del usuario; filtros ?estado= y ?patient_id=
+    metodo: GET
+    ruta: /api/v1/ai-reports
 
   ia_reporte:                          # {"id": ..., "estado": "pendiente" | "aprobado" | "rechazado"}
     metodo: GET
@@ -111,13 +130,19 @@ rutas:
     ruta: /api/v1/patients/{patient_id}/clinical-record.pdf
 
   imagenes_paciente:
-    # Estudios de imagen del paciente en la forma del contrato:
-    # {"imagenes": [{"id": ...}, ...]}
-    # Las imagenes de un estudio: GET /api/v1/imaging-studies/{study_id}/images
-    # y su descarga (PNG): GET /api/v1/imaging/instances/{instance_id}/preview
+    # {"imagenes": [{"id", "url", "url_absoluta", "estudio_id", "modalidad", "fecha", "numero",
+    #                "tipo_contenido"}, ...]}
+    # Cada elemento es una imagen descargable: "id" es el id de INSTANCIA del PACS y "url" es la
+    # ruta de descarga (relativa a la URL de la API; "url_absoluta" trae el mismo enlace completo).
+    # La descarga usa el mismo token Bearer y responde 200 con Content-Type image/png.
+    # Un estudio sin pixeles en el PACS no aparece en la lista. Alcance: la IPS del usuario mas los
+    # pacientes remitidos al especialista; lo que queda fuera no se lista (el paciente solo ve lo
+    # suyo y el de otro responde 404; el contable recibe 403). Si el PACS no responde: 503 con
+    # un mensaje en espanol (nunca 500).
+    # Pacientes con imagenes reales para esta prueba: ver datos_prueba.paciente_con_imagenes.
     metodo: GET
     ruta: /api/v1/patients/{patient_id}/imagenes
-    descarga_imagen:
+    descarga_imagen:                   # 200, Content-Type: image/png (equivale al campo "url" de cada imagen)
       metodo: GET
       ruta: /api/v1/imaging/instances/{instance_id}/preview
 
@@ -142,6 +167,13 @@ rutas:
   contable_listar:                     # lista de facturas con "paciente_id"; las automaticas llevan "reporte_id"
     metodo: GET
     ruta: /api/v1/facturas             # solo contable y admin; el medico recibe 403
+
+  contable_crear:                      # 201; solo contable y admin (medico: 403). Factura manual
+    metodo: POST
+    ruta: /api/v1/facturas
+    cuerpo: {paciente_id: "{patient_id}", servicio: consulta, descripcion: "<texto, minimo 3 caracteres>", cantidad: 1}
+    # servicio: "consulta" (usa la tarifa) o "medicamento" (exige valor_unitario). Las facturas
+    # de analisis de IA y de estancia se crean solas (R19); no se crean por esta ruta.
 
   notificaciones:                      # [{"id","tipo","mensaje","leida","fecha","paciente_id", ...}]
     metodo: GET
@@ -169,6 +201,12 @@ rutas:
     base: fhir                         # se resuelve contra url_publica.fhir
     ruta: /fhir/Observation
     content_type: application/fhir+json
+    cuerpo_ejemplo:                    # glucosa LOINC 2339-0; ver observacion_fhir y datos_prueba.fhir
+      resourceType: Observation
+      status: final
+      code: {coding: [{system: "http://loinc.org", code: "2339-0", display: "Glucose [Mass/volume] in Blood"}]}
+      subject: {reference: "Patient/310"}   # datos_prueba.fhir.subject_reference
+      valueQuantity: {value: 182, unit: mg/dL, system: "http://unitsofmeasure.org", code: mg/dL}
 
   tiempo_real:
     tipo: websocket
@@ -210,15 +248,57 @@ rutas_auxiliares:
   crear_observacion:
     metodo: POST
     ruta: /api/v1/observations
-  desbloquear_cuenta:                  # solo admin; R02
+  # R02: tres login fallidos con la clave equivocada (401 cada uno); el cuarto, aunque use la
+  # clave correcta, responde 423. El admin desbloquea y el siguiente login correcto da 200.
+  # Bloqueo y desbloqueo quedan en la auditoria y el bloqueo avisa al admin (R19).
+  desbloquear_cuenta:                  # solo admin; 200; el cuerpo es opcional
     metodo: POST
     ruta: /api/v1/admin/users/{user_id}/unlock
-  listar_cuentas:                      # solo admin
+    cuerpo: {reason: "<motivo, opcional>"}
+  listar_cuentas:                      # solo admin; ?only_locked=true muestra las bloqueadas; el id sale de "id"
     metodo: GET
     ruta: /api/v1/admin/users
-  auditoria:                           # solo admin; medico recibe 403
+  # R03: cualquier ruta de datos sin Authorization responde 401. Ejemplo para probarlo:
+  ruta_protegida_sin_token:
     metodo: GET
-    ruta: /api/v1/audit-logs
+    ruta: /api/v1/patients             # sin cabecera Authorization -> 401
+  auditoria:                           # R13; solo admin (medico: 403). Pagina {"items": [...], "total": n}
+    metodo: GET                        # Filtros: ?action=, ?entity_type=, ?entity_id=, ?user_id=, ?page_size= (max 100).
+    ruta: /api/v1/audit-logs           # Cada item: user_id, username, action, entity_type, entity_id, metadata_json, created_at.
+  listar_pacientes:                    # es una busqueda: exige ?document_number= (minimo 6 caracteres) o ?name= (minimo 3
+    metodo: GET                        # letras); sin criterio responde 422. Devuelve {"items": [...]} (maximo 10).
+    ruta: /api/v1/patients
+  eliminar_paciente:                   # R14; 204. El medico elimina (borrado logico) solo el paciente que creo
+    metodo: DELETE
+    ruta: /api/v1/patients/{patient_id}
+  restaurar_paciente:                  # R14; 200. Solo admin (medico: 403)
+    metodo: POST
+    ruta: /api/v1/patients/{patient_id}/restore
+  fhir_buscar_paciente:                # R15; Bundle con el Patient. El identificador es el numero de documento
+    metodo: GET                        # (tambien sirve "CC-<numero>" o el id de la API).
+    base: fhir
+    ruta: /fhir/Patient?identifier={document_number}
+  fhir_leer_paciente:                  # R15 por la API: lee el recurso Patient desde HAPI (solo admin)
+    metodo: GET
+    ruta: /api/v1/integration/fhir/patients/{patient_id}
+  especialistas:                       # R08; medico o admin. Devuelve los especialistas a quienes remitir
+    metodo: GET
+    ruta: /api/v1/referrals/specialists
+  remision_rechazar:                   # R08; solo el especialista destinatario
+    metodo: POST
+    ruta: /api/v1/referrals/{referral_id}/reject
+    cuerpo: {motivo: "<texto>"}
+  crear_estudio_imagen:                # 201; medico o especialista de la IPS. Registra los metadatos del estudio
+    metodo: POST
+    ruta: /api/v1/imaging-studies
+  subir_imagen:                        # 201; el cuerpo es el archivo tal cual (DICOM, PNG o JPEG, maximo 15 MB)
+    metodo: POST
+    ruta: /api/v1/imaging-studies/{study_id}/images
+    content_type: application/octet-stream
+  contable_anular:                     # solo contable y admin; sirve para limpiar facturas de prueba
+    metodo: POST
+    ruta: /api/v1/facturas/{factura_id}/anular
+    cuerpo: {motivo: "<texto, minimo 3 caracteres>"}
   organizaciones:
     metodo: GET
     ruta: /api/v1/organizations
@@ -229,6 +309,24 @@ rutas_auxiliares:
     metodo: GET
     base: fhir
     ruta: /fhir/metadata
+
+# --------------------------------------------------------------------------
+# Datos de prueba preparados en el sistema desplegado (R06). Cada paciente tiene
+# al menos una radiografia de torax real (NIH ChestX-ray14) en el PACS, subida por
+# la API, en el alcance de las cuentas tester.*. Los identificadores son de la base
+# desplegada; si se recrea la base hay que volver a cargarlos.
+# --------------------------------------------------------------------------
+datos_prueba:
+  paciente_con_imagenes: 2033e0d3-ad13-4d56-97eb-3b99d45edb2d      # Laura Rojas, en Centro Medico Central:
+                                                                   # la ven tester.medico y tester.especialista
+  paciente_tester_con_imagenes: 392fdb04-99f3-4107-94de-78c95463c70e  # "Tester Paciente" (CC 9900009901): la ven
+                                                                   # tester.paciente (la suya), tester.medico y tester.especialista
+  fhir:                                # R21: paciente de prueba para publicar la Observation de glucosa
+    paciente_id: 2033e0d3-ad13-4d56-97eb-3b99d45edb2d              # Laura Rojas (la misma de paciente_con_imagenes)
+    hapi_id: "310"                                                 # id logico en HAPI
+    subject_reference: "Patient/310"                               # valor listo para subject.reference
+    numero_documento: "1032486442"                                 # tipo CC; alternativa: subject.identifier.value sin system
+    subject_identifier_alternativo: {value: "1032486442"}          # tambien "CC-1032486442" o el paciente_id
 
 # --------------------------------------------------------------------------
 # Paciente critico (R20): valores clinicos que, con el modelo desplegado,
@@ -263,4 +361,10 @@ observacion_fhir:
   descripcion: Glucose [Mass/volume] in Blood
   unidad: mg/dL
   valor_ejemplo: 182
-  referencia_paciente: "Patient/<id del paciente en HAPI>"   # tambien se resuelve por subject.identifier
+  # Usar el paciente de datos_prueba.fhir (Laura Rojas, en el alcance de tester.medico):
+  referencia_paciente: "Patient/310"   # = datos_prueba.fhir.subject_reference; el medico responsable recibe el aviso
+  # Alternativa sin id de HAPI: subject.identifier SIN "system" con el numero de documento
+  # ("1032486442"), con "CC-1032486442" o con el id de la API (uuid del paciente). Si el valor
+  # coincide con mas de un paciente (mismo numero con distinto tipo de documento) el paciente
+  # queda como desconocido y solo se audita; "CC-<numero>" evita esa ambiguedad.
+  # No sirve "Patient/<uuid de la API>": HAPI lo rechaza con 400 (la referencia debe ser el id logico de HAPI).

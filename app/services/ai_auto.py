@@ -23,6 +23,9 @@ Rules shared by both:
 * **One automatic report per encounter and kind**, guaranteed by a partial
   UNIQUE index (``uq_ai_reports_auto_per_encounter``) plus an in-process claim.
   The loser of a race backs off silently.
+* **One pending report per identical input across both paths.** The worker and
+  the manual route share a per-patient lock (:mod:`app.services.patient_locks`)
+  around "look up, call the model, store", and re-check the database inside it.
 * **Attribution.** ``requested_by`` is null (the system asked), the origin is
   ``automatico`` and the audit entry carries ``origen: automatico``.
 """
@@ -52,7 +55,7 @@ from app.models.enums import (
     ObservationStatus,
 )
 from app.models.patient import Patient
-from app.services import ai_reports, ml_client, pseudonymization, recipients
+from app.services import ai_reports, ml_client, patient_locks, pseudonymization, recipients
 from app.services.errors import (
     ConflictError,
     MlServiceRejectedError,
@@ -96,7 +99,14 @@ def due_encounters_stmt(
 ) -> Select[tuple[uuid.UUID]]:
     """Open encounters without an automatic report whose last usable variable is
     older than ``cutoff`` (the grace period) but newer than ``since`` (the
-    look-back window)."""
+    look-back window).
+
+    An encounter is also skipped while its patient already has a criticality
+    report (any origin or status) made after that last usable variable: the
+    worker would find nothing new to analyze, and re-selecting it on every tick
+    would let those encounters fill the ``LIMIT`` and starve the ones really due.
+    A newer variable makes it due again.
+    """
 
     has_report = (
         select(AiReport.id)
@@ -108,8 +118,12 @@ def due_encounters_stmt(
         .exists()
     )
     last_usable = func.max(Observation.created_at)
-    return (
-        select(Encounter.id)
+    usable = (
+        select(
+            Encounter.id.label("encounter_id"),
+            Encounter.patient_id.label("patient_id"),
+            last_usable.label("last_usable"),
+        )
         .join(Observation, Observation.encounter_id == Encounter.id)
         .join(Patient, Patient.id == Encounter.patient_id)
         .where(
@@ -123,9 +137,23 @@ def due_encounters_stmt(
             Observation.value_numeric.is_not(None),
             ~has_report,
         )
-        .group_by(Encounter.id)
+        .group_by(Encounter.id, Encounter.patient_id)
         .having(last_usable <= cutoff, last_usable >= since)
-        .order_by(last_usable)
+        .subquery("usable")
+    )
+    covered = (
+        select(AiReport.id)
+        .where(
+            AiReport.patient_id == usable.c.patient_id,
+            AiReport.kind == AiReportKind.CRITICALITY,
+            AiReport.created_at >= usable.c.last_usable,
+        )
+        .exists()
+    )
+    return (
+        select(usable.c.encounter_id)
+        .where(~covered)
+        .order_by(usable.c.last_usable)
         .limit(limit)
     )
 
@@ -184,6 +212,27 @@ def analyze_encounter(
     patient = db.get(Patient, encounter.patient_id)
     if patient is None or patient.deleted_at is not None:
         return None
+
+    # Same lock as the manual route: when both fire together, the second one
+    # finds the first one's committed report and backs off (or returns it).
+    with patient_locks.patient_lock(patient.id):
+        report = _store_if_due(db, encounter, patient, allow_partial=allow_partial)
+    if report is None:
+        return None
+
+    # The doctor hears first (one inbox row, one push): the alert and the counter
+    # reactors behind ``reporte_generado`` make several round trips to the database.
+    _tell_the_clinician(db, patient, report)
+    ai_reports.announce_generated(db, report)
+    return report
+
+
+def _store_if_due(
+    db: Session, encounter: Encounter, patient: Patient, *, allow_partial: bool
+) -> AiReport | None:
+    """The part of the analysis that must not interleave with another report
+    of the same patient. Runs with the patient lock held."""
+
     if _has_automatic_report(db, encounter.id):
         return None
 
@@ -192,8 +241,9 @@ def analyze_encounter(
         return None
     if ai_reports.count_clinical_inputs(payload) < ai_reports.MIN_CLINICAL_INPUTS:
         return None
-    # A report with exactly this input is already waiting for a signature.
-    if ai_reports.pending_with_payload(db, patient.id, payload) is not None:
+    # A report with exactly this input already exists (a manual one waiting for a
+    # signature, or one already signed or rejected): nothing new to analyze.
+    if ai_reports.pending_with_payload(db, patient.id, payload, statuses=ai_reports.ANY_STATUS):
         return None
 
     # Network call first: if it fails nothing is written and a later
@@ -204,10 +254,8 @@ def analyze_encounter(
         logger.warning("Automatic AI analysis of encounter %s postponed: %s", encounter.id, exc)
         return None
 
-    # The model call takes a while: a manual request may have made the same
-    # report in the meantime.
-    if ai_reports.pending_with_payload(db, patient.id, payload) is not None:
-        return None
+    # No second look-up needed: the manual route waits on the same patient lock
+    # for the whole model call, so nobody can store a report in the meantime.
     try:
         report = ai_reports.store_report(
             db,
@@ -223,11 +271,6 @@ def analyze_encounter(
         # already rolled back, so nothing is half-written.
         logger.info("Encounter %s already has its automatic report", encounter.id)
         return None
-
-    # The doctor hears first (one inbox row, one push): the alert and the counter
-    # reactors behind ``reporte_generado`` make several round trips to the database.
-    _tell_the_clinician(db, patient, report)
-    ai_reports.announce_generated(db, report)
     return report
 
 
