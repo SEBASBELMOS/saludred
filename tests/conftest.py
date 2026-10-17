@@ -25,6 +25,9 @@ os.environ["FHIR_AUTO_SYNC"] = "false"
 os.environ["ALERT_ESCALATION_ENABLED"] = "false"
 # The cleaning-evidence gate is off by default; its tests switch it on.
 os.environ["REQUIRE_CLEANING_EVIDENCE"] = "false"
+# The automatic AI analysis and the mandatory review note are opt-in per test.
+os.environ["AI_AUTO_ANALYSIS"] = "false"
+os.environ["REQUIRE_REVIEW_NOTE"] = "false"
 
 import mongomock  # noqa: E402
 import pytest  # noqa: E402

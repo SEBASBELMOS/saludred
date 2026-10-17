@@ -21,17 +21,19 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Uuid,
     event,
     func,
     inspect,
+    text,
 )
 from sqlalchemy.orm import Mapped, Mapper, mapped_column, relationship
 
 from app.models.base import Base, UUIDPrimaryKeyMixin
-from app.models.enums import AiReportKind, AiReportStatus, enum_column
+from app.models.enums import AiReportKind, AiReportOrigin, AiReportStatus, enum_column
 from app.models.governance import JSON_COLUMN
 from app.models.identity import User
 from app.models.patient import Patient
@@ -47,12 +49,26 @@ IMMUTABLE_COLUMNS = (
     "level",
     "is_critical",
     "requested_by",
+    "encounter_id",
+    "origin",
     "created_at",
 )
 
 
 class AiReport(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "ai_reports"
+    __table_args__ = (
+        # Exactly one automatic report per encounter and kind, whatever the
+        # concurrency: the loser of a race gets an IntegrityError and backs off.
+        Index(
+            "uq_ai_reports_auto_per_encounter",
+            "encounter_id",
+            "kind",
+            unique=True,
+            postgresql_where=text("origin = 'automatico'"),
+            sqlite_where=text("origin = 'automatico'"),
+        ),
+    )
 
     patient_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -78,8 +94,22 @@ class AiReport(UUIDPrimaryKeyMixin, Base):
         default=AiReportStatus.PENDING,
         index=True,
     )
-    requested_by: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    # Null for an automatic report: the system asked, not a person.
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+    # Encounter the automatic analysis was made for (null for manual reports).
+    encounter_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("encounters.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    origin: Mapped[AiReportOrigin] = mapped_column(
+        enum_column(AiReportOrigin, "ai_report_origin"),
+        nullable=False,
+        default=AiReportOrigin.MANUAL,
+        server_default=AiReportOrigin.MANUAL.value,
     )
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
@@ -97,7 +127,7 @@ class AiReport(UUIDPrimaryKeyMixin, Base):
     )
 
     patient: Mapped[Patient] = relationship(foreign_keys=[patient_id])
-    requester: Mapped[User] = relationship(foreign_keys=[requested_by])
+    requester: Mapped[User | None] = relationship(foreign_keys=[requested_by])
     reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewed_by])
 
     def __repr__(self) -> str:

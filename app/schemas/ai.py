@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.enums import AiReportKind, AiReportStatus
+from app.models.enums import AiReportKind, AiReportOrigin, AiReportStatus
 from app.schemas.observation import ObservationRead
 from app.schemas.patient import PatientRead
 
@@ -33,7 +33,11 @@ class AiAnalysisCreate(BaseModel):
 class AiReportApprove(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    observaciones: str | None = Field(default=None, max_length=1000)
+    observaciones: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="Clinical concept of the signer. Optional unless REQUIRE_REVIEW_NOTE is on",
+    )
 
 
 class AiReportReject(BaseModel):
@@ -73,7 +77,15 @@ class AiReportRead(BaseModel):
     model_version: str
     imputed: list[str]
     top_features: list[AiFeatureContribution]
-    requested_by: uuid.UUID
+    origen: AiReportOrigin = Field(
+        description="automatico: made by the system when the vitals were recorded; manual: requested"
+    )
+    encounter_id: uuid.UUID | None = Field(
+        description="Encounter an automatic report was made for"
+    )
+    requested_by: uuid.UUID | None = Field(
+        description="Who asked for it; null for an automatic report"
+    )
     reviewed_by: uuid.UUID | None
     firmado_por: str | None = Field(description="Name of the clinician who signed")
     reviewed_at: datetime | None

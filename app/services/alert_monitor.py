@@ -5,7 +5,10 @@ Every ``ALERT_MONITOR_INTERVAL_SECONDS`` (30 by default) it runs ``tick``:
 1. escalates the alerts nobody acknowledged within ``ALERT_ESCALATION_MINUTES``
    (``alerts.escalate_overdue``);
 2. raises the "free but not cleaned" alert for beds in CLEANING without approved
-   evidence, and closes the ones that no longer are (``alerts.sync_bed_alerts``).
+   evidence, and closes the ones that no longer are (``alerts.sync_bed_alerts``);
+3. the fallback of the automatic AI analysis (``ai_auto.sweep``): open encounters
+   whose vitals stayed incomplete past ``AI_AUTO_GRACE_SECONDS`` are analyzed with
+   what they have, and an analysis the AI service could not make is retried.
 
 It lives inside the FastAPI lifespan, which is valid because the API runs ONE
 worker (``tests/test_deploy_constraints.py`` enforces it): with several workers
@@ -30,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.core import database
 from app.core.config import Settings
-from app.services import alerts
+from app.services import ai_auto, alerts
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +43,7 @@ def tick(
 ) -> dict[str, int]:
     """One pass of the monitor over ``db``. ``now`` is a parameter so tests freeze the clock."""
 
-    summary = {"escaladas": 0, "camas_creadas": 0, "camas_resueltas": 0}
+    summary = {"escaladas": 0, "camas_creadas": 0, "camas_resueltas": 0, "ia_automaticos": 0}
     try:
         summary["escaladas"] = len(
             alerts.escalate_overdue(db, now=now, minutes=escalation_minutes)
@@ -54,6 +57,14 @@ def tick(
         summary["camas_resueltas"] = beds["resueltas"]
     except Exception:  # noqa: BLE001
         logger.exception("Bed alert synchronization failed")
+        db.rollback()
+    try:
+        # Fallback of the automatic AI analysis: encounters whose vitals stayed
+        # incomplete past the grace period, and any analysis the AI service
+        # could not make when the vitals were recorded (it is retried here).
+        summary["ia_automaticos"] = ai_auto.sweep(db, now=now)
+    except Exception:  # noqa: BLE001
+        logger.exception("Automatic AI analysis sweep failed")
         db.rollback()
     if any(summary.values()):
         logger.info("Alert monitor: %s", summary)

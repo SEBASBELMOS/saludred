@@ -52,7 +52,13 @@ def request_analysis(
     payload: AiAnalysisCreate | None = None,
 ) -> AiReportRead:
     """Arma el payload minimizado y seudonimizado, consulta el modelo y deja un
-    reporte `pendiente`. Si el servicio de IA no responde: 503 y no se guarda nada."""
+    reporte `pendiente` de origen `manual`. Si el servicio de IA no responde: 503
+    y no se guarda nada.
+
+    El analisis normal es automatico (ver docs/IA.md): esta ruta se conserva para
+    el contrato. Es tolerante a repeticiones: si ya hay un reporte `pendiente` del
+    paciente hecho con un payload identico al que se enviaria ahora, se devuelve
+    ese mismo reporte (mismo codigo y forma) en lugar de crear un duplicado."""
 
     authz.require_role(user, *authz.AI_REVIEWERS)
     patient = patients_service.get_patient(db, patient_id)

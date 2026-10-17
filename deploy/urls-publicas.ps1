@@ -1,7 +1,7 @@
 # Imprime las URLs publicas de los tuneles de Cloudflare.
 #
 # Uso:
-#   docker compose --profile public up -d
+#   docker compose up -d
 #   powershell -ExecutionPolicy Bypass -File .\deploy\urls-publicas.ps1
 #
 # Se invoca con -ExecutionPolicy Bypass porque Windows bloquea por defecto la

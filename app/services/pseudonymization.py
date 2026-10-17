@@ -61,6 +61,8 @@ PAYLOAD_FIELDS = (
     "acuity",
 )
 CLINICAL_FIELDS = tuple(f for f in PAYLOAD_FIELDS if f != "pseudonym")
+# The six vital signs the automatic analysis waits for before running on its own.
+CORE_VITAL_FIELDS = tuple(field for field, _unit in LOINC_TO_FIELD.values())
 
 
 def pseudonym_for(patient_id: uuid.UUID | str) -> str:
@@ -81,12 +83,18 @@ def age_in_years(birth_date: date, today: date | None = None) -> int:
 
 
 def latest_vitals(
-    db: Session, patient_id: uuid.UUID, *, organization_id: uuid.UUID | None = None
+    db: Session,
+    patient_id: uuid.UUID,
+    *,
+    organization_id: uuid.UUID | None = None,
+    encounter_id: uuid.UUID | None = None,
 ) -> dict[str, float]:
     """Most recent usable value of each model variable for the patient.
 
     ``organization_id`` restricts the observations to one IPS, so an
     institution-bound clinician only sends what it could already read.
+    ``encounter_id`` restricts them to one encounter (the automatic analysis
+    works per encounter).
     """
 
     stmt = (
@@ -100,6 +108,8 @@ def latest_vitals(
         )
         .order_by(Observation.observed_at.desc())
     )
+    if encounter_id is not None:
+        stmt = stmt.where(Observation.encounter_id == encounter_id)
     if organization_id is not None:
         stmt = stmt.join(Encounter, Observation.encounter_id == Encounter.id).where(
             Encounter.organization_id == organization_id
@@ -120,6 +130,7 @@ def build_criticality_payload(
     *,
     acuity: int | None = None,
     organization_id: uuid.UUID | None = None,
+    encounter_id: uuid.UUID | None = None,
 ) -> dict[str, object]:
     """The only thing the AI service ever receives about a patient."""
 
@@ -131,7 +142,9 @@ def build_criticality_payload(
         "pseudonym": pseudonym_for(patient.id),
         "age": age_in_years(patient.birth_date),
         "sex": sex,
-        **latest_vitals(db, patient.id, organization_id=organization_id),
+        **latest_vitals(
+            db, patient.id, organization_id=organization_id, encounter_id=encounter_id
+        ),
     }
     if acuity is not None:
         payload["acuity"] = acuity

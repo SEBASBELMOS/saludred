@@ -1,14 +1,15 @@
 # Infraestructura completa del proyecto.
 #
-# `docker compose up -d` levanta las piezas: la base de datos de la aplicacion,
-# la API, el servicio de IA (ml), MongoDB (contabilidad), la interfaz web, el servidor HAPI FHIR y la
-# base de datos propia de HAPI.
+# UN SOLO `docker compose up -d` levanta TODO, sin perfiles: la base de datos
+# de la aplicacion, la API, el servicio de IA (ml), MongoDB (contabilidad), la
+# interfaz web (nginx), el servidor HAPI FHIR con su base propia, el PACS
+# (Orthanc) y los tres tuneles de Cloudflare (cloudflared).
 # No hace falta instalar Python ni dependencias en la maquina anfitriona.
 #
-# El PACS (Orthanc) queda en el perfil "pacs" y no arranca por defecto: es
-# un servicio pesado y solo se necesita al trabajar con imagenes.
-#
-#     docker compose --profile pacs up -d orthanc
+# Ningun servicio usa `profiles`: tests/test_deploy_constraints.py lo exige.
+# Orthanc y los tuneles no frenan a nadie si tardan: la API solo habla con el
+# PACS cuando se pide una imagen (y responde 503 mientras no este listo), y los
+# tuneles esperan a que su destino este sano antes de abrirse.
 #
 # El servidor FHIR conserva su propia base de datos, separada de la de la
 # aplicacion. Son dos sistemas con ciclos de vida distintos: la aplicacion es
@@ -84,6 +85,14 @@ services:
       # limpieza aprobada por otra persona (409). El front lo explica y ofrece
       # registrar la evidencia desde el panel de la cama.
       REQUIRE_CLEANING_EVIDENCE: ${REQUIRE_CLEANING_EVIDENCE:-false}
+      # Analisis de IA automatico: se genera solo cuando el encuentro tiene los
+      # seis signos vitales (o, pasada la gracia, los minimos). AI_AUTO_GRACE_SECONDS
+      # es la espera del respaldo del monitor. Ver docs/IA.md.
+      AI_AUTO_ANALYSIS: ${AI_AUTO_ANALYSIS:-true}
+      AI_AUTO_GRACE_SECONDS: ${AI_AUTO_GRACE_SECONDS:-120}
+      # Concepto clinico obligatorio al firmar. false por defecto: R10 dice que el
+      # clinico "puede agregar observaciones". El front siempre lo pide.
+      REQUIRE_REVIEW_NOTE: ${REQUIRE_REVIEW_NOTE:-false}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # PSEUDONYM_KEY (clave HMAC de la seudonimizacion, R12) llega por el
       # .env, como JWT_SECRET_KEY: sin ella la API no arranca.
@@ -202,7 +211,6 @@ services:
     #    API, no por equipos de imagenologia.
     image: orthancteam/orthanc:25.5.1
     container_name: saludred-orthanc
-    profiles: ["pacs"]
     environment:
       ORTHANC__NAME: "SaludRed PACS"
       ORTHANC__AUTHENTICATION_ENABLED: "true"
@@ -214,6 +222,18 @@ services:
       - "127.0.0.1:8042:8042"
     volumes:
       - saludred-orthanc-data:/var/lib/orthanc/db
+    # La imagen no trae curl ni wget, pero si python3. Con la autenticacion
+    # activa, un 401 sin credenciales tambien prueba que el servidor responde.
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import http.client as h,sys; c=h.HTTPConnection('127.0.0.1',8042,timeout=3); c.request('GET','/system'); sys.exit(0 if c.getresponse().status in (200,401) else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
     restart: unless-stopped
 
   hapi-db:
@@ -281,12 +301,10 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------
-  # Publicacion en internet (perfil "public")
+  # Publicacion en internet (cloudflared)
   #
-  # Estos dos servicios NO arrancan con `docker compose up`. Se levantan solo
-  # cuando se necesita exponer el sistema:
-  #
-  #     docker compose --profile public up -d
+  # Estos tres servicios arrancan con el mismo `docker compose up -d` que todo
+  # lo demas: no hay perfil que activar.
   #
   # Cada uno abre un Quick Tunnel de Cloudflare: una conexion SALIENTE hacia
   # Cloudflare que devuelve una URL publica https://algo.trycloudflare.com. No
@@ -308,16 +326,15 @@ services:
     # su infraestructura, asi que anclar una version envejece mal.
     image: cloudflare/cloudflared:latest
     container_name: saludred-tunnel-api
-    profiles: ["public"]
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     command: tunnel --no-autoupdate --url http://api:8000
     restart: unless-stopped
 
   tunnel-fhir:
     image: cloudflare/cloudflared:latest
     container_name: saludred-tunnel-fhir
-    profiles: ["public"]
     depends_on:
       - hapi
     command: tunnel --no-autoupdate --url http://hapi:8080
@@ -328,9 +345,9 @@ services:
     # URL sirve la aplicacion completa.
     image: cloudflare/cloudflared:latest
     container_name: saludred-tunnel-web
-    profiles: ["public"]
     depends_on:
-      - web
+      web:
+        condition: service_healthy
     command: tunnel --no-autoupdate --url http://web:80
     restart: unless-stopped
 

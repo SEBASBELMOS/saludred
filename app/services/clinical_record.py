@@ -161,7 +161,7 @@ def render_pdf(record: ClinicalRecordRead) -> bytes:
             line(f"Variables que mas pesaron: {drivers}")
         line(f"Firmado por: {item.firmado_por or '-'}  el {_fmt(item.reviewed_at)}")
         if item.observaciones:
-            line(f"Observaciones del clinico: {item.observaciones}")
+            line(f"Concepto clinico: {item.observaciones}")
         pdf.ln(2)
 
     pdf.ln(2)

@@ -56,8 +56,8 @@ def _alerts_of(db, patient_id: str) -> list[Alert]:
     return list(db.scalars(select(Alert).where(Alert.patient_id == uuid.UUID(patient_id))))
 
 
-def _critical(client_as, patient) -> dict:  # noqa: ANN001
-    response = _analyze(client_as("operador.norte"), patient["id"])
+def _critical(client_as, patient, **body) -> dict:  # noqa: ANN001, ANN003
+    response = _analyze(client_as("operador.norte"), patient["id"], **body)
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -133,7 +133,7 @@ def test_only_one_active_alert_per_patient(scene) -> None:
 
     db, client_as, patient, _ml = scene
     first = _critical(client_as, patient)
-    second = _critical(client_as, patient)
+    second = _critical(client_as, patient, triage_level=2)  # same payload would be deduplicated
     assert first["id"] != second["id"]
 
     (alert,) = _alerts_of(db, patient["id"])
@@ -146,7 +146,7 @@ def test_only_one_active_alert_per_patient(scene) -> None:
     assert client_as("operador.norte").post(
         f"{ALERTS}/{alert.id}/acknowledge", json={"nota": "Revisado"}
     ).status_code == 200
-    _critical(client_as, patient)
+    _critical(client_as, patient, triage_level=3)
     states = sorted(a.status.value for a in _alerts_of(db, patient["id"]))
     assert states == ["activa", "reconocida"]
 

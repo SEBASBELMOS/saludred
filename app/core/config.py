@@ -89,6 +89,24 @@ class Settings(BaseSettings):
     # false (por defecto) el cambio de estado se comporta como siempre.
     require_cleaning_evidence: bool = False
 
+    # Automatic AI analysis. When the core vital signs of an open encounter are
+    # all recorded, the criticality analysis runs on its own (event reactor plus
+    # background work); nobody presses a button. Tests force it off.
+    ai_auto_analysis: bool = True
+    # Fallback of the monitor tick: an open encounter whose usable variables have
+    # not changed for this long (and meet the minimum) is analyzed with what it has.
+    ai_auto_grace_seconds: int = Field(default=120, ge=0)
+    # The fallback only looks at recent activity, so switching the feature on
+    # never back-fills the old encounters of the dataset.
+    ai_auto_lookback_minutes: int = Field(default=60, ge=1)
+
+    # Clinical judgment on sign-off. With REQUIRE_REVIEW_NOTE=true approving (or
+    # rejecting) a report without a written concept of at least 10 characters
+    # answers 422. With false (default) the API stays tolerant: R10 says the
+    # clinician "puede agregar observaciones", and the automatic tester approves
+    # without text. The web UI always asks for it.
+    require_review_note: bool = False
+
     # Billing (R09). Invoices live in MongoDB, apart from the clinical record.
     # No default URL: with MONGO_URL unset the API starts anyway and every
     # billing route answers 503, instead of guessing a host or a credential.

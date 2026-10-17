@@ -7,6 +7,7 @@ import uuid
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.events.bus import DomainEvent, publish
 from app.models.clinical import Encounter, Observation
 from app.models.identity import User
 from app.models.loinc import BY_CODE, PLAUSIBLE_RANGE
@@ -90,6 +91,23 @@ def create_observation(
     soft_ops.audit_create(db, observation, actor=actor)
     commit(db)
     db.refresh(observation)
+    # A fact, after the commit. Nobody is addressed (and nothing is stored): the
+    # automatic AI analysis reacts to it when the vitals are complete.
+    publish(
+        DomainEvent(
+            tipo="observacion_registrada",
+            mensaje="Observacion registrada",
+            recipients=(),
+            paciente_id=observation.patient_id,
+            datos={
+                "observacion_id": str(observation.id),
+                "encounter_id": str(observation.encounter_id),
+                "codigo": observation.code,
+            },
+            persist=False,
+        ),
+        db,
+    )
     return observation
 
 

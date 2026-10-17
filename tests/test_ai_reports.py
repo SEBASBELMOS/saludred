@@ -240,8 +240,9 @@ def test_full_flow_one_approved_one_rejected(scene) -> None:
     assert first.status_code == 201
     assert first.json()["estado"] == "pendiente"
     approved_id = first.json()["id"]
-    rejected_id = _analyze(doctor, patient["id"]).json()["id"]
-    pending_id = _analyze(doctor, patient["id"]).json()["id"]
+    # An identical pending payload would be returned, not duplicated: vary the triage level.
+    rejected_id = _analyze(doctor, patient["id"], triage_level=2).json()["id"]
+    pending_id = _analyze(doctor, patient["id"], triage_level=3).json()["id"]
 
     # Pending reports are not part of the record.
     record = doctor.get(f"/api/v1/patients/{patient['id']}/clinical-record").json()
@@ -302,7 +303,7 @@ def test_a_report_is_reviewed_once(scene) -> None:
     _db, client_as, patient, _ml = scene
     doctor = client_as("operador.norte")
     a = _analyze(doctor, patient["id"]).json()["id"]
-    b = _analyze(doctor, patient["id"]).json()["id"]
+    b = _analyze(doctor, patient["id"], triage_level=2).json()["id"]
     assert doctor.post(f"/api/v1/ai-reports/{a}/approve", json={}).status_code == 200
     assert doctor.post(f"/api/v1/ai-reports/{a}/approve", json={}).status_code == 409
     assert doctor.post(f"/api/v1/ai-reports/{a}/reject", json={"motivo": "tarde"}).status_code == 409
@@ -394,7 +395,7 @@ def test_every_step_is_audited(scene) -> None:
     db, client_as, patient, _ml = scene
     doctor = client_as("operador.norte")
     approved = _analyze(doctor, patient["id"]).json()["id"]
-    rejected = _analyze(doctor, patient["id"]).json()["id"]
+    rejected = _analyze(doctor, patient["id"], triage_level=2).json()["id"]
     doctor.post(f"/api/v1/ai-reports/{approved}/approve", json={})
     doctor.post(f"/api/v1/ai-reports/{rejected}/reject", json={"motivo": "no concuerda"})
     doctor.get(f"/api/v1/patients/{patient['id']}/clinical-record")

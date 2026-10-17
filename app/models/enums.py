@@ -231,6 +231,13 @@ class AiReportKind(str, Enum):
     CRITICALITY = "criticality"
 
 
+class AiReportOrigin(str, Enum):
+    """How an AI report came to exist: the system on its own, or a clinician's request."""
+
+    AUTOMATIC = "automatico"
+    MANUAL = "manual"
+
+
 class AiReportStatus(str, Enum):
     """Clinical sign-off state of an AI report (R10, "soft put").
 

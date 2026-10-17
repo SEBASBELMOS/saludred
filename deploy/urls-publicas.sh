@@ -2,7 +2,7 @@
 # Imprime las URLs publicas de los tuneles de Cloudflare.
 #
 # Uso:
-#   docker compose --profile public up -d
+#   docker compose up -d
 #   bash deploy/urls-publicas.sh
 #
 # Las URLs cambian cada vez que los contenedores de tunel se reinician.

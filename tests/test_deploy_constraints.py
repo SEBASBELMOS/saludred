@@ -69,6 +69,59 @@ def test_compose_enables_rest_hook_subscriptions_in_hapi() -> None:
     assert re.search(r'HAPI_FHIR_SUBSCRIPTION_RESTHOOK_ENABLED:\s*"?true"?', compose)
 
 
+def _compose_services() -> dict[str, str]:
+    """``{service name: its block of text}`` without a YAML parser (comments dropped)."""
+
+    lines = [
+        line
+        for line in (ROOT / "docker-compose.yml").read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    ]
+    start = lines.index("services:") + 1
+    blocks: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in lines[start:]:
+        if line and not line.startswith(" "):  # next top-level key (volumes:)
+            break
+        header = re.match(r"^  ([A-Za-z][\w-]*):\s*$", line)
+        if header:
+            current = blocks.setdefault(header.group(1), [])
+        elif current is not None:
+            current.append(line)
+    return {name: "\n".join(body) for name, body in blocks.items()}
+
+
+def test_a_plain_compose_up_starts_everything() -> None:
+    """R05: one ``docker compose up -d`` raises the whole system. A service with a
+    profile would be skipped by it, so no service may declare one."""
+
+    services = _compose_services()
+    for name, body in services.items():
+        assert not re.search(r"^\s+profiles\s*:", body, re.M), f"{name} uses profiles"
+    assert not re.search(r"^\s*profiles\s*:", (ROOT / "docker-compose.yml").read_text(), re.M)
+
+
+def test_compose_declares_every_required_service() -> None:
+    services = _compose_services()
+    required = {"api", "db", "mongo", "hapi", "orthanc", "ml", "web"}
+    assert required <= set(services), required - set(services)
+    tunnels = {name for name, body in services.items() if "cloudflare/cloudflared" in body}
+    assert tunnels == {"tunnel-api", "tunnel-fhir", "tunnel-web"}
+    # The PACS image is pinned, and the API does not wait for it to start.
+    assert re.search(r"image:\s*orthancteam/orthanc:\S+", services["orthanc"])
+    api_depends = services["api"].split("depends_on:")[1].split("env_file:")[0]
+    assert "orthanc" not in api_depends
+    # A tunnel opens only once its target is up.
+    assert "condition: service_healthy" in services["tunnel-web"]
+    assert "condition: service_healthy" in services["tunnel-api"]
+
+
+def test_compose_passes_the_ai_settings_with_safe_defaults() -> None:
+    api = _compose_services()["api"]
+    assert "AI_AUTO_ANALYSIS: ${AI_AUTO_ANALYSIS:-true}" in api
+    assert "REQUIRE_REVIEW_NOTE: ${REQUIRE_REVIEW_NOTE:-false}" in api
+
+
 def _settings(**overrides):  # noqa: ANN202, ANN003
     base = dict(
         database_url="postgresql+psycopg://a:b@h/d",

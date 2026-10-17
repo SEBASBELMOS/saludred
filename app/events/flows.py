@@ -3,6 +3,8 @@
 Business code publishes facts (``reporte_generado``, ``remision_creada``...) and
 knows nothing about alerts or counters; these small functions react to them:
 
+* ``ai_auto_reactor``  -- ``observacion_registrada`` / ``fhir_observacion`` -> schedule
+  the automatic AI analysis (the report then publishes ``reporte_generado``).
 * ``alert_reactor``    -- ``reporte_generado`` -> raise the critical alert (R20) and
   announce it (``alerta_critica``).
 * ``counters_reactor`` -- any event that moves a pending-work counter (R18) ->
@@ -34,6 +36,40 @@ ALERT_EVENTS = frozenset(
     {"alerta_critica", "alerta_cama_sin_limpiar", "alerta_reconocida", "alerta_escalada"}
 )
 COUNTER_EVENTS = REPORT_EVENTS | REFERRAL_EVENTS | ALERT_EVENTS
+
+
+OBSERVATION_RECORDED = "observacion_registrada"
+FHIR_OBSERVATION = "fhir_observacion"
+
+
+def ai_auto_reactor(event: DomainEvent, db: Session) -> None:
+    """A new observation may complete the vitals: schedule the automatic AI analysis.
+
+    Only schedules. The work (model call, report, notification) runs in a worker
+    thread with its own session, so the clinical write that published the event
+    is never slowed down or failed by it.
+    """
+
+    if event.tipo not in (OBSERVATION_RECORDED, FHIR_OBSERVATION):
+        return
+
+    from app.models.clinical import Observation
+    from app.services import ai_auto
+
+    if not ai_auto.enabled():
+        return
+    raw = event.datos.get("encounter_id")
+    if raw:
+        encounter_id = uuid.UUID(str(raw))
+    elif event.datos.get("observacion_id"):
+        # A delivery from the FHIR server names the observation, not the encounter.
+        observation = db.get(Observation, uuid.UUID(str(event.datos["observacion_id"])))
+        if observation is None:
+            return
+        encounter_id = observation.encounter_id
+    else:
+        return
+    ai_auto.dispatch(encounter_id)
 
 
 def alert_reactor(event: DomainEvent, db: Session) -> None:

@@ -13,9 +13,12 @@ register_reactor(billing_reactor)
 
 # Critical alerts (R20) and pending-work counters (R18). Registered last: the
 # counters are computed after the inbox and the invoices are up to date.
-from app.events.flows import alert_reactor, counters_reactor  # noqa: E402
+from app.events.flows import ai_auto_reactor, alert_reactor, counters_reactor  # noqa: E402
 
 register_reactor(alert_reactor)
 register_reactor(counters_reactor)
+
+# Automatic AI analysis: schedules background work, so its position is irrelevant.
+register_reactor(ai_auto_reactor)
 
 __all__ = ["DomainEvent", "publish", "register_reactor"]

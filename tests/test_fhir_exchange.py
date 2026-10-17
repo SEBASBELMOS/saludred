@@ -22,8 +22,9 @@ def record(db, client_as, ml):
     patient = _create_patient(db, client_as)
     doctor = client_as("operador.norte")
     approved = _analyze(doctor, patient["id"]).json()["id"]
-    _analyze(doctor, patient["id"])  # stays pending
-    rejected = _analyze(doctor, patient["id"]).json()["id"]
+    # Identical pending payloads are returned, not duplicated: vary the triage level.
+    _analyze(doctor, patient["id"], triage_level=2)  # stays pending
+    rejected = _analyze(doctor, patient["id"], triage_level=3).json()["id"]
     doctor.post(f"/api/v1/ai-reports/{approved}/approve", json={"observaciones": "Concuerda"})
     doctor.post(f"/api/v1/ai-reports/{rejected}/reject", json={"motivo": "No aplica"})
     return db, client_as, patient, approved
