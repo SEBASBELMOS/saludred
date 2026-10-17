@@ -32,7 +32,8 @@ CRITICALITY_RANGES: dict[str, tuple[float, float]] = {
 class FeatureSpec:
     numeric: list[str]
     categorical: dict[str, list[str]] = field(default_factory=dict)
-    # Filled by ``fit_defaults``: medians for numerics, most frequent for categories.
+    # Filled by ``fit_defaults``: most frequent value for categories (used when one is
+    # missing) and medians for numerics (reference only: the pipeline imputes them).
     defaults: dict[str, float | str] = field(default_factory=dict)
 
     @property
@@ -57,16 +58,22 @@ class FeatureSpec:
             self.defaults[name] = max(counts, key=lambda c: counts[c])
 
     def encode(self, record: dict[str, object]) -> tuple[np.ndarray, list[str]]:
-        """Return the encoded vector and the inputs that had to be imputed."""
+        """Return the encoded vector and the inputs that had to be imputed.
+
+        A missing NUMERIC input stays NaN here: the fitted imputer inside the model
+        pipeline (KNN by default) fills it, so the same step runs in training folds
+        and in serving. A missing CATEGORICAL input takes the training mode.
+        """
 
         imputed: list[str] = []
         vector: list[float] = []
         for name in self.numeric:
             value = record.get(name)
             if value is None:
-                value = self.defaults[name]
+                vector.append(np.nan)
                 imputed.append(name)
-            vector.append(float(value))
+            else:
+                vector.append(float(value))
         for name, categories in self.categorical.items():
             value = record.get(name)
             if value is None:

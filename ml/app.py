@@ -114,8 +114,8 @@ class Prediction(BaseModel):
 
 LINEAR_EXPLANATION = "coeficiente x valor estandarizado (log-odds); el modelo es lineal"
 OCCLUSION_EXPLANATION = (
-    "cambio de probabilidad de este paciente al reemplazar la variable por su valor típico "
-    "de entrenamiento (explicación local, válida para cualquier modelo)"
+    "cambio de probabilidad de este paciente al reemplazar la variable por un valor imputado "
+    "con pacientes parecidos del entrenamiento (explicación local, válida para cualquier modelo)"
 )
 
 
@@ -134,6 +134,14 @@ class Bundle:
     def _probability(self, matrix: np.ndarray) -> np.ndarray:
         return self.estimator.predict_proba(matrix)[:, 1]
 
+    def _filled(self, vector: np.ndarray) -> np.ndarray:
+        """The vector with its missing numerics filled by the fitted imputer (raw units)."""
+
+        steps = self.estimator.named_steps
+        row = vector.reshape(1, -1)
+        scaler = steps["scale"]
+        return scaler.inverse_transform(steps["impute"].transform(scaler.transform(row)))[0]
+
     def _scores(
         self, record: dict[str, object], vector: np.ndarray, probability: float
     ) -> dict[str, float]:
@@ -142,6 +150,7 @@ class Bundle:
         if self.explain == "linear":
             scaler = self.estimator.named_steps["scale"]
             model = self.estimator.named_steps["model"]
+            vector = self._filled(vector)
             scaled = (vector - scaler.mean_) / np.where(scaler.scale_ == 0, 1.0, scaler.scale_)
             raw = model.coef_[0] * scaled
             scores: dict[str, float] = {}
@@ -170,6 +179,8 @@ class Bundle:
         ]
         probability = float(self._probability(vector.reshape(1, -1))[0])
         scores = self._scores(record, vector, probability)
+        # Shown values: a missing numeric appears with the value the imputer gave it.
+        vector = self._filled(vector)
 
         contributions: list[Contribution] = []
         column = 0
@@ -215,11 +226,61 @@ class Bundle:
         )
 
 
+class MinutesPrediction(BaseModel):
+    minutes: float
+    model_version: str
+    model_family: str
+    typical_error_minutes: float
+    imputed: list[str]
+    unrecognized: list[str]
+
+
+class MinutesBundle:
+    """Regression on the continuous target: minutes until the bed is ready."""
+
+    def __init__(self, raw: dict[str, Any]) -> None:
+        self.version: str = raw["version"]
+        self.family: str = raw["family"]
+        self.spec = raw["spec"]
+        self.estimator = raw["estimator"]
+        self.mae_cv: float = raw["mae_cv"]
+        self.low, self.high = raw["range"]
+
+    def predict(self, record: dict[str, object]) -> MinutesPrediction:
+        vector, imputed = self.spec.encode(record)
+        unrecognized = [
+            name
+            for name, categories in self.spec.categorical.items()
+            if record.get(name) is not None and record[name] not in categories
+        ]
+        minutes = float(self.estimator.predict(vector.reshape(1, -1))[0])
+        return MinutesPrediction(
+            minutes=round(min(max(minutes, self.low), self.high), 1),
+            model_version=self.version,
+            model_family=self.family,
+            typical_error_minutes=self.mae_cv,
+            imputed=imputed,
+            unrecognized=unrecognized,
+        )
+
+
+def _cleaning_record(body: CleaningRequest) -> dict[str, object]:
+    record: dict[str, object] = {
+        key: (int(value) if isinstance(value, bool) else value)
+        for key, value in body.model_dump().items()
+    }
+    record["shift"] = shift_of(body.release_hour)
+    if record["service"] is not None and not str(record["service"]).strip():
+        raise HTTPException(status_code=422, detail="service must not be blank")
+    return record
+
+
 def create_app(artifact_dir: Path = DEFAULT_ARTIFACTS) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # noqa: ANN202
         app.state.criticality = Bundle(joblib.load(artifact_dir / "criticality.joblib"))
         app.state.cleaning = Bundle(joblib.load(artifact_dir / "cleaning_delay.joblib"))
+        app.state.minutes = MinutesBundle(joblib.load(artifact_dir / "cleaning_minutes.joblib"))
         app.state.metrics = json.loads((artifact_dir / "metrics.json").read_text("utf-8"))
         yield
 
@@ -253,14 +314,11 @@ def create_app(artifact_dir: Path = DEFAULT_ARTIFACTS) -> FastAPI:
 
     @app.post("/predict/cleaning-delay", response_model=Prediction)
     def predict_cleaning(body: CleaningRequest, request: Request) -> Prediction:
-        record: dict[str, object] = {
-            key: (int(value) if isinstance(value, bool) else value)
-            for key, value in body.model_dump().items()
-        }
-        record["shift"] = shift_of(body.release_hour)
-        if record["service"] is not None and not str(record["service"]).strip():
-            raise HTTPException(status_code=422, detail="service must not be blank")
-        return request.app.state.cleaning.predict(record)
+        return request.app.state.cleaning.predict(_cleaning_record(body))
+
+    @app.post("/predict/cleaning-minutes", response_model=MinutesPrediction)
+    def predict_cleaning_minutes(body: CleaningRequest, request: Request) -> MinutesPrediction:
+        return request.app.state.minutes.predict(_cleaning_record(body))
 
     return app
 

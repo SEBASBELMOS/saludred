@@ -8,7 +8,7 @@ import compare
 import train
 from features import CLEANING_SPEC, FeatureSpec
 
-EXPECTED = {"lr", "tree", "knn", "rf", "gb", "svm", "mlp", "stack"}
+EXPECTED = {"lr", "tree", "knn", "rf", "gb", "lgbm", "xgb", "svm", "mlp", "stack"}
 TASKS = ("criticality", "cleaning_delay")
 
 
@@ -148,6 +148,83 @@ def test_importance_and_odds_ratios_are_reported(artifacts) -> None:
             for r in ratios
             if abs(r["coefficient"]) > 0.01
         )
+
+
+def _cleaning_data():
+    records, y = train.load_cleaning(train.DATA_DIR / "cleaning_events.csv")
+    spec = FeatureSpec(CLEANING_SPEC.numeric, dict(CLEANING_SPEC.categorical))
+    spec.fit_defaults(records)
+    return spec, spec.matrix(records), y
+
+
+def test_svm_grid_tunes_c_and_gamma_together() -> None:
+    grid = compare.model_by_key("svm").grid
+    assert set(grid) == {"model__C", "model__gamma"}
+    assert len(grid["model__C"]) >= 3 and len(grid["model__gamma"]) >= 3
+    from sklearn.model_selection import ParameterGrid
+
+    # The tuner walks the full product, not one axis at a time.
+    assert len(ParameterGrid(grid)) == len(grid["model__C"]) * len(grid["model__gamma"])
+
+
+def test_reported_svm_hyperparameters_include_gamma(artifacts) -> None:
+    _, metrics = artifacts
+    for task in TASKS:
+        svm = next(m for m in metrics[task]["comparacion"]["models"] if m["id"] == "svm")
+        assert {"C", "gamma"} <= set(svm["hyperparameters"])
+
+
+def test_boosting_libraries_are_in_the_comparison(artifacts) -> None:
+    _, metrics = artifacts
+    for task in TASKS:
+        names = {m["nombre"] for m in metrics[task]["comparacion"]["models"]}
+        assert {"LightGBM", "XGBoost"} <= names
+
+
+def test_knn_imputer_is_fitted_on_training_rows_only() -> None:
+    spec, X, y = _cleaning_data()
+    train_rows, test_rows = X[:600], X[600:].copy()
+    test_rows[::2, spec.names.index("pending_cleaning_beds")] = np.nan
+    pipeline = compare.model_by_key("lr").make(1).fit(train_rows, y[:600])
+    imputer = pipeline.named_steps["impute"]
+    assert type(imputer).__name__ == "KNNImputer"
+    # The imputer only holds the (scaled) training rows: it never saw the held-out ones.
+    assert imputer._fit_X.shape[0] == 600
+    scaled_train = pipeline.named_steps["scale"].transform(train_rows)
+    assert np.allclose(imputer._fit_X, scaled_train)
+    # Rows with gaps are scored without error and without NaN in the output.
+    assert np.isfinite(pipeline.predict_proba(test_rows)).all()
+
+
+def test_median_imputer_is_available_for_the_ablation() -> None:
+    pipeline = compare.model_by_key("lr").make(1, "median")
+    assert type(pipeline.named_steps["impute"]).__name__ == "SimpleImputer"
+
+
+def test_imputation_ablation_runs_both_imputers_with_the_same_protocol() -> None:
+    spec, X, y = _cleaning_data()
+    result = compare.imputation_ablation(
+        X, y, groups=None, spec=spec, model=compare.model_by_key("lr"),
+        target_recall=0.8, repeats=1,
+    )
+    assert set(result["arms"]) == {"knn", "median"}
+    assert 0.1 < result["missing_rate_injected"] < 0.2
+    assert result["chosen"] in {"knn", "median"} and result["reason"]
+
+
+def test_metrics_report_the_imputation_ablation_and_the_regression(artifacts) -> None:
+    out, metrics = artifacts
+    for task in TASKS:
+        imputation = metrics[task]["imputation"]
+        assert imputation["training_rows_with_missing"] == 0
+        assert imputation["method_served"] == imputation["chosen"]
+    regression = metrics["cleaning_delay"]["regresion"]
+    assert {m["id"] for m in regression["models"]} == {"mean", "linear", "forest"}
+    by_id = {m["id"]: m for m in regression["models"]}
+    assert by_id["linear"]["mae"] < by_id["mean"]["mae"]
+    assert all(m["mae"] > 0 and m["r2"] <= 1 for m in regression["models"])
+    text = (out / "REPORTE_MODELOS.md").read_text(encoding="utf-8")
+    assert "mediana frente a KNN" in text and "Qué se aplicó de la clase del 06/10" in text
 
 
 def test_report_is_generated_from_the_same_run(artifacts) -> None:

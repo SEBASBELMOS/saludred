@@ -63,7 +63,7 @@ def test_a_non_linear_winner_is_served_with_the_same_contract(artifacts, tmp_pat
             body = service.post("/predict/criticality", json=SICK).json()
             assert body["model_version"] == f"criticality-{key}-1.0-test"
             assert body["model_family"] == key
-            assert "valor típico" in body["explanation"]
+            assert "imputado" in body["explanation"]
             assert {"feature", "value", "contribution", "imputed"} == set(body["top_features"][0])
             assert len(body["top_features"]) == 3
             assert service.post(
@@ -94,11 +94,11 @@ def test_health_lists_both_models(client) -> None:
 
 def test_models_returns_the_comparison_and_names_the_served_winner(client) -> None:
     body = client.get("/models").json()
-    codes = {"lr", "dt", "knn", "rf", "gb", "svm", "mlp", "stack"}
+    codes = {"lr", "dt", "knn", "rf", "gb", "lgbm", "xgb", "svm", "mlp", "stack"}
     for task, prefix in (("criticality", "criticality-"), ("cleaning_delay", "cleaning-delay-")):
         block = body[task]
         comparison = block["comparacion"]
-        assert len(comparison["models"]) == 8
+        assert len(comparison["models"]) == 10
         winner = next(m for m in comparison["models"] if m["winner"])
         assert winner["id"] == comparison["winner"] == block["winner"]
         # The version carries the family of the model that is actually served.
@@ -219,6 +219,53 @@ def test_cleaning_accepts_partial_input_and_unknown_service(client) -> None:
     ).json()
     assert "unrecognized" in body and body["unrecognized"] == ["service"]
     assert "weekday" in body["imputed"]
+
+
+def test_criticality_with_a_missing_vital_is_imputed_by_the_fitted_imputer(client) -> None:
+    body = client.post(
+        "/predict/criticality", json={k: v for k, v in SICK.items() if k != "o2sat"}
+    ).json()
+    assert body["imputed"] == ["o2sat"]
+    assert 0 <= body["probability"] <= 1
+    assert all(c["value"] == c["value"] for c in body["top_features"])  # no NaN leaks out
+
+
+BUSY = {
+    "service": "UCI Adultos",
+    "release_reason": "transfer",
+    "isolation": "spores",
+    "release_hour": 3,
+    "weekday": 2,
+    "previous_stay_hours": 200,
+    "cleaning_staff_on_shift": 1,
+    "pending_cleaning_beds": 4,
+    "service_occupancy": 0.97,
+    "curtains_change_required": True,
+    "patient_waiting": True,
+}
+
+
+def test_cleaning_minutes_endpoint(client) -> None:
+    easy = {**BUSY, "service": "Urgencias", "release_reason": "discharge", "isolation": "none",
+            "release_hour": 10, "cleaning_staff_on_shift": 5, "pending_cleaning_beds": 0,
+            "service_occupancy": 0.7, "curtains_change_required": False,
+            "previous_stay_hours": 5}
+    slow = client.post("/predict/cleaning-minutes", json=BUSY)
+    fast = client.post("/predict/cleaning-minutes", json=easy)
+    assert slow.status_code == 200 and fast.status_code == 200
+    assert slow.json()["minutes"] > fast.json()["minutes"] > 0
+    assert slow.json()["typical_error_minutes"] > 0
+    assert slow.json()["imputed"] == []
+    models = client.get("/models").json()["cleaning_delay"]
+    assert slow.json()["model_version"] == models["regresion"]["model_version"]
+
+
+def test_cleaning_minutes_imputes_missing_inputs_and_rejects_extras(client) -> None:
+    partial = client.post("/predict/cleaning-minutes", json={"release_hour": 14})
+    assert partial.status_code == 200
+    assert "weekday" in partial.json()["imputed"] and partial.json()["minutes"] > 0
+    assert client.post("/predict/cleaning-minutes", json={"patient_name": "Maria"}).status_code == 422
+    assert client.post("/predict/cleaning-minutes", json={"pseudonym": PSEUDONYM}).status_code == 422
 
 
 def test_cleaning_rejects_patient_data(client) -> None:

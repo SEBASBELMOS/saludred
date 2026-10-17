@@ -136,6 +136,24 @@ def _task(name: str, block: dict[str, Any]) -> list[str]:
     out.append(f"**Por qué ganó {winner['nombre']}:** {comparison['decision']}.")
     out.append("")
 
+    svm = next((e for e in entries if e["id"] == "svm"), None)
+    if svm:
+        hp = svm["hyperparameters"]
+        out.append(
+            f"**SVM, C y gamma juntos:** se ajustaron en una sola malla (C en 0.25, 1, 4 y gamma "
+            f"en «scale», 0.01, 0.1). El valor más elegido en los folds fue C = {hp.get('C')} y "
+            f"gamma = {hp.get('gamma')}; AUC {_auc(svm)}, F1 {_num(svm['f1'])}."
+        )
+        out.append("")
+    boosters = [e for e in entries if e["id"] in {"gb", "lgbm", "xgb"}]
+    out.append(
+        "**Boosting:** "
+        + "; ".join(f"{e['nombre']} AUC {_auc(e)}, F1 {_num(e['f1'])}" for e in boosters)
+        + "."
+    )
+    out.append("")
+    out.extend(_imputation(block["imputation"], block["data"]))
+
     c = winner["confusion"]
     out.append(f"### Matriz de confusión de {winner['nombre']}")
     out.append("")
@@ -192,6 +210,140 @@ def _task(name: str, block: dict[str, Any]) -> list[str]:
             f"sin aumento."
         )
         out.append("")
+    if "regresion" in block:
+        out.extend(_regression(block["regresion"]))
+    return out
+
+
+def _imputation(imp: dict[str, Any], data: dict[str, Any]) -> list[str]:
+    knn, median = imp["arms"]["knn"], imp["arms"]["median"]
+    out = ["### Imputación de valores faltantes: mediana frente a KNN", ""]
+    out.append(
+        f"Filas de entrenamiento con algún valor faltante: {imp['training_rows_with_missing']} "
+        f"({imp['training_missing_cells']} celdas). "
+        + (
+            "El conjunto de entrenamiento está completo: con él ambos imputadores darían "
+            "exactamente lo mismo, así que la comparación se hizo borrando al azar "
+            f"{_pct(imp['missing_rate_injected'])} de las celdas numéricas (mismas celdas para "
+            "los dos métodos, sin aumento de datos porque no puede interpolar vacíos). "
+            "En el servicio los faltantes sí aparecen (por ejemplo, un paciente sin nivel de triage)."
+            if imp["training_rows_with_missing"] == 0
+            else ""
+        )
+    )
+    out.append("")
+    out.extend(
+        _table(
+            ["Imputación", "AUC", "F1", "Error estándar del F1", "Sensibilidad", "Precisión"],
+            [
+                [
+                    "Mediana" if kind == "median" else f"KNN (k = {imp['knn_neighbors']})",
+                    _num(arm["auc"]),
+                    _num(arm["f1"]),
+                    _num(arm["f1_se"]),
+                    _num(arm["recall"]),
+                    _num(arm["precision"]),
+                ]
+                for kind, arm in (("median", median), ("knn", knn))
+            ],
+        )
+    )
+    out.append("")
+    out.append(
+        f"Modelo usado en la comparación: {imp['model_name']} (el ganador). Mismo protocolo "
+        f"para ambos: el imputador se ajusta solo con las filas de entrenamiento de cada fold y "
+        f"se aplica después de estandarizar. **Decisión:** {imp['reason']}. "
+        f"Imputación en servicio: {'KNN' if imp['method_served'] == 'knn' else 'mediana'}."
+    )
+    out.append("")
+    return out
+
+
+def _regression(reg: dict[str, Any]) -> list[str]:
+    protocol = reg["protocol"]
+    target = reg["target_summary"]
+    out = ["### Regresión: minutos hasta que la cama queda lista", ""]
+    out.append(
+        f"Variable continua `minutes_to_ready` (media {target['mean_minutes']} min, mediana "
+        f"{target['median_minutes']} min, rango {target['min_minutes']}-{target['max_minutes']}). "
+        f"Mismas variables de entrada, imputación KNN dentro del fold y {protocol['repeats']} "
+        f"repeticiones de validación cruzada de {protocol['folds']} folds."
+    )
+    out.append("")
+    out.extend(
+        _table(
+            ["Modelo", "MAE (min)", "DE del MAE", "R²"],
+            [
+                [
+                    f"**{m['nombre']} (en servicio)**" if m["winner"] else m["nombre"],
+                    f"{m['mae']:.2f}",
+                    f"{m['mae_std']:.2f}",
+                    f"{m['r2']:.3f}",
+                ]
+                for m in reg["models"]
+            ],
+        )
+    )
+    out.append("")
+    out.append(
+        f"{reg['decision']}. Frente al promedio, el modelo en servicio se equivoca "
+        f"{reg['improvement_over_baseline_minutes']:.2f} minutos menos en promedio. "
+        f"Se atiende en `POST /predict/cleaning-minutes` (versión `{reg['model_version']}`)."
+    )
+    out.append("")
+    return out
+
+
+def _class_map(metrics: dict[str, Any]) -> list[str]:
+    crit = metrics["criticality"]["comparacion"]
+    clean = metrics["cleaning_delay"]["comparacion"]
+    svm = next(e for e in clean["models"] if e["id"] == "svm")["hyperparameters"]
+    imp = metrics["cleaning_delay"]["imputation"]
+    imp_c = metrics["criticality"]["imputation"]
+    rows = [
+        [
+            "SVM: optimizar C y gamma a la vez",
+            f"Una sola malla C × gamma dentro del CV (limpieza: C = {svm.get('C')}, gamma = "
+            f"{svm.get('gamma')}).",
+        ],
+        [
+            "La mediana no es el método más apropiado; usar KNN",
+            f"Imputación KNN dentro de cada fold; ablación contra mediana en ambas tareas "
+            f"(limpieza: {imp['chosen']}, criticidad: {imp_c['chosen']}).",
+        ],
+        [
+            "No depender de la imputación interna del modelo",
+            "Todos los modelos son pipelines estandarizar -> imputar -> modelo.",
+        ],
+        [
+            "Bagging frente a boosting; LightGBM, XGBoost, CatBoost",
+            "Random forest (bagging), gradient boosting, LightGBM y XGBoost en la misma "
+            "comparación. CatBoost no se incluyó: su ventaja es manejar variables categóricas "
+            "con muchas categorías y aquí hay pocas, de modo que no justifica una dependencia "
+            "más pesada en la imagen.",
+        ],
+        [
+            "Importancia de variables para detectar sesgo",
+            f"Importancia por permutación por tarea (criticidad: "
+            f"«{crit['importance']['by_model'][crit['importance']['shown_model']][0]['label']}»; "
+            f"limpieza: "
+            f"«{clean['importance']['by_model'][clean['importance']['shown_model']][0]['label']}») "
+            f"y desempeño por subgrupo.",
+        ],
+        ["Stacking", "Modelo «Stacking (LR + RF + GB)» con meta-modelo logístico."],
+        [
+            "Regresión lineal (variable continua)",
+            "Minutos hasta cama lista: línea base, regresión lineal y random forest, con MAE y R².",
+        ],
+        [
+            "Métrica y umbral",
+            "F1, sensibilidad y especificidad; umbral elegido fuera de muestra; regla de un "
+            "error estándar.",
+        ],
+    ]
+    out = ["## Qué se aplicó de la clase del 06/10", ""]
+    out.extend(_table(["Lo que enseñó el profesor", "Dónde aparece"], rows))
+    out.append("")
     return out
 
 
@@ -204,8 +356,10 @@ def render(metrics: dict[str, Any]) -> str:
         "Semilla fija: " + str(metrics["seed"]) + ".",
         "",
         "Modelos comparados: regresión logística, KNN, SVM con kernel RBF, árbol de decisión, "
-        "random forest (bagging), gradient boosting de scikit-learn, stacking (logística + "
-        "random forest + boosting con meta-modelo logístico) y una red neuronal pequeña (MLP).",
+        "random forest (bagging), gradient boosting de scikit-learn, LightGBM, XGBoost, "
+        "stacking (logística + random forest + boosting con meta-modelo logístico) y una red "
+        "neuronal pequeña (MLP). Todos reciben los datos estandarizados y con los faltantes "
+        "imputados de forma explícita (KNN, ajustado solo con el entrenamiento de cada fold).",
         "",
         "Limitaciones que aplican a todo el reporte: la cohorte de criticidad es una muestra "
         "pequeña (demo de MIMIC-IV-ED); el umbral se elige con las mismas predicciones fuera de "
@@ -215,4 +369,5 @@ def render(metrics: dict[str, Any]) -> str:
     ]
     for name in ("criticality", "cleaning_delay"):
         lines.extend(_task(name, metrics[name]))
+    lines.extend(_class_map(metrics))
     return "\n".join(lines).rstrip() + "\n"

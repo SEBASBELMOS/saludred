@@ -1,4 +1,4 @@
-"""Compare eight supervised models per task, then write the winner and ``metrics.json``.
+"""Compare ten supervised models per task (plus a regression for cleaning minutes), then write the winner and ``metrics.json``.
 
 Run at image build time (``RUN python train.py``) so the container carries
 exactly the models its metrics describe. Everything is deterministic (seed 2026)
@@ -33,6 +33,7 @@ import joblib
 import numpy as np
 
 import compare
+import regress
 import report
 from augment import MULTIPLIER
 from compare import confusion, mean_auc, mean_rates
@@ -214,6 +215,23 @@ def _run_task(
     probs = oof.probs[winner.key]
     threshold = float(entry["threshold"])
 
+    # Median vs KNN imputation on the winning family, same protocol, injected gaps. The
+    # served model uses KNN unless it is clearly worse (see ``imputation_ablation``).
+    missing_cells = int(np.isnan(X).sum())
+    imputation = compare.imputation_ablation(
+        X,
+        y,
+        groups=groups,
+        spec=spec,
+        model=winner,
+        target_recall=target_recall,
+        repeats=repeats,
+    )
+    imputer = imputation["chosen"]
+    imputation["method_served"] = imputer
+    imputation["training_rows_with_missing"] = int(np.isnan(X).any(axis=1).sum())
+    imputation["training_missing_cells"] = missing_cells
+
     estimator, params, n_synthetic = compare.fit_model(
         winner,
         X,
@@ -222,6 +240,7 @@ def _run_task(
         spec=spec,
         use_augmentation=use_augmentation,
         seed=SEED,
+        imputer=imputer,
     )
     logistic, _, _ = compare.fit_model(
         compare.model_by_key("lr"),
@@ -231,6 +250,7 @@ def _run_task(
         spec=spec,
         use_augmentation=use_augmentation,
         seed=SEED,
+        imputer=imputer,
     )
 
     ablation = None
@@ -271,6 +291,7 @@ def _run_task(
             "version": version,
             "family": winner.key,
             "explain": "linear" if winner.key == "lr" else "occlusion",
+            "imputer": imputer,
             "spec": spec,
             "estimator": estimator,
             "threshold": threshold,
@@ -285,6 +306,7 @@ def _run_task(
         "algorithm": f"{winner.label}, hiperparámetros {params or 'sin ajuste'}",
         "winner": winner.key,
         "features": spec.names,
+        "imputation": imputation,
         "imputation_defaults": spec.defaults,
         "evaluation": evaluation_block(y, probs, threshold, target_recall),
         "bias_by_subgroup": subgroup_table(y, probs, threshold, masks),
@@ -352,12 +374,47 @@ def train_criticality(data_dir: Path, out_dir: Path, repeats: int) -> dict[str, 
     }
 
 
+def train_regression(
+    path: Path, spec: FeatureSpec, X: np.ndarray, repeats: int, out_dir: Path
+) -> dict[str, Any]:
+    """Minutes until the bed is ready: baseline vs linear vs one tree-based regressor."""
+
+    minutes = np.array([float(r["minutes_to_ready"]) for r in read_csv(path)])
+    block = regress.compare_regressors(X, minutes, repeats=repeats)
+    winner = regress.REGRESSORS_BY_KEY[block["winner"]]
+    entry = next(e for e in block["models"] if e["id"] == winner.key)
+    estimator = winner.make(SEED).fit(X, minutes)
+    version = f"cleaning-minutes-{winner.code}-1.0-{file_digest(path)}"
+    joblib.dump(
+        {
+            "name": "cleaning_minutes",
+            "version": version,
+            "family": winner.key,
+            "spec": spec,
+            "estimator": estimator,
+            "mae_cv": entry["mae"],
+            "r2_cv": entry["r2"],
+            "range": (float(minutes.min()), float(minutes.max())),
+        },
+        out_dir / "cleaning_minutes.joblib",
+    )
+    block["model_version"] = version
+    block["target_summary"] = {
+        "mean_minutes": round(float(minutes.mean()), 1),
+        "median_minutes": round(float(np.median(minutes)), 1),
+        "min_minutes": round(float(minutes.min()), 1),
+        "max_minutes": round(float(minutes.max()), 1),
+    }
+    return block
+
+
 def train_cleaning(data_dir: Path, out_dir: Path, repeats: int) -> dict[str, object]:
     path = data_dir / "cleaning_events.csv"
     records, y = load_cleaning(path)
     spec = FeatureSpec(CLEANING_SPEC.numeric, dict(CLEANING_SPEC.categorical))
     spec.fit_defaults(records)
     X = spec.matrix(records)
+    regression = train_regression(path, spec, X, repeats, out_dir)
 
     masks: dict[str, np.ndarray] = {}
     for column in ("service", "shift"):
@@ -396,6 +453,7 @@ def train_cleaning(data_dir: Path, out_dir: Path, repeats: int) -> dict[str, obj
             "evaluated_on_synthetic_rows": True,
             "note": "The whole dataset is simulated; the metrics describe the simulation.",
         },
+        "regresion": regression,
         **block,
     }
 
