@@ -82,7 +82,7 @@ Resumen; la correspondencia con las normas y las pruebas de cada control están 
 
 ## 5. Modelos de IA y métricas
 
-Para cada tarea se entrenan y comparan ocho modelos supervisados (regresión logística, KNN, SVM con kernel RBF, árbol de decisión, random forest, gradient boosting, stacking y una red neuronal pequeña) con el mismo protocolo, y el servicio `ml` atiende al ganador. Las métricas y la comparación se consultan en `GET /api/v1/ai/models`, se ven en Indicadores y se resumen en `ml/REPORTE_MODELOS.md`. Detalle completo, método y tablas en [`IA.md`](IA.md).
+Para cada tarea se entrenan y comparan diez modelos supervisados (regresión logística, KNN, SVM con kernel RBF, árbol de decisión, random forest, gradient boosting, LightGBM, XGBoost, stacking y una red neuronal pequeña) con el mismo protocolo, y el servicio `ml` atiende al ganador. Todos son pipelines `estandarizar → imputar (KNN) → modelo`, y el SVM ajusta C y gamma juntos. Además, para limpieza hay una regresión de los minutos hasta que la cama queda lista (`POST /predict/cleaning-minutes` del servicio `ml`: MAE 11,19 min con regresión lineal frente a 17,07 del promedio). Las métricas y la comparación se consultan en `GET /api/v1/ai/models`, se ven en Indicadores y se resumen en `ml/REPORTE_MODELOS.md`. Detalle completo, método y tablas en [`IA.md`](IA.md).
 
 **Protocolo.** Validación cruzada de 5 particiones repetida 3 veces, ajuste de hiperparámetros dentro de cada partición de entrenamiento y **umbral elegido con las predicciones fuera de partición** (el más alto con la sensibilidad objetivo). El ganador es el de mayor F1 fuera de partición entre los que cumplen la sensibilidad; si la diferencia con otro es menor que un error estándar, gana el más simple y explicable.
 
@@ -93,13 +93,15 @@ Predice si el paciente necesitará ingreso hospitalario con urgencia. Se entrena
 | Modelo | AUC | F1 | Sensibilidad | Precisión |
 |---|---|---|---|---|
 | **Regresión logística (ganador)** | 0,623 | 0,746 | 0,850 | 0,666 |
-| Árbol de decisión | 0,556 | 0,750 | 0,856 | 0,669 |
+| Árbol de decisión | 0,554 | 0,754 | 0,853 | 0,676 |
 | KNN | 0,585 | 0,753 | 0,861 | 0,671 |
 | Random forest | 0,576 | 0,760 | 0,853 | 0,686 |
 | Gradient boosting | 0,581 | 0,752 | 0,850 | 0,674 |
-| SVM (RBF) | 0,538 | 0,756 | 0,853 | 0,680 |
+| LightGBM | 0,558 | 0,747 | 0,850 | 0,667 |
+| XGBoost | 0,574 | 0,749 | 0,850 | 0,669 |
+| SVM (RBF) | 0,550 | 0,751 | 0,850 | 0,673 |
 | Red neuronal (MLP) | 0,616 | 0,753 | 0,850 | 0,675 |
-| Stacking | 0,573 | 0,759 | 0,853 | 0,684 |
+| Stacking | 0,574 | 0,758 | 0,850 | 0,684 |
 
 **Por qué ganó la logística.** Todos los F1 están entre 0,746 y 0,760, dentro de un error estándar (0,023): es un empate práctico y gana el más simple y explicable, que además tiene el AUC más alto. Ningún modelo supera el F1 de marcar a todos (0,796). Matriz de confusión del ganador (promedio por repetición, umbral 0,415): 108,0 críticos detectados, 19,0 perdidos, 54,3 falsas alarmas y 10,7 descartados correctamente; especificidad 0,164 y 85 % de pacientes marcados.
 
@@ -126,13 +128,15 @@ Predice si una cama que entra a limpieza estará lista en más de 90 minutos. Se
 | Modelo | AUC | F1 | Sensibilidad | Precisión |
 |---|---|---|---|---|
 | **Regresión logística (ganador)** | 0,823 | 0,525 | 0,806 | 0,389 |
-| Árbol de decisión | 0,778 | 0,487 | 0,806 | 0,349 |
+| Árbol de decisión | 0,777 | 0,487 | 0,806 | 0,349 |
 | KNN | 0,783 | 0,507 | 0,814 | 0,368 |
-| Random forest | 0,808 | 0,520 | 0,804 | 0,384 |
+| Random forest | 0,808 | 0,519 | 0,804 | 0,383 |
 | Gradient boosting | 0,807 | 0,507 | 0,806 | 0,370 |
-| SVM (RBF) | 0,770 | 0,478 | 0,810 | 0,339 |
+| LightGBM | 0,808 | 0,499 | 0,808 | 0,361 |
+| XGBoost | 0,810 | 0,507 | 0,804 | 0,371 |
+| SVM (RBF) | 0,779 | 0,457 | 0,832 | 0,315 |
 | Red neuronal (MLP) | 0,812 | 0,521 | 0,802 | 0,386 |
-| Stacking | 0,816 | 0,521 | 0,802 | 0,385 |
+| Stacking | 0,816 | 0,515 | 0,808 | 0,378 |
 
 La logística gana con el F1 más alto. Matriz de confusión del ganador (umbral 0,15): 133,0 retrasos detectados, 32,0 perdidos, 209,0 falsas alarmas y 426,0 descartados correctamente; especificidad 0,671.
 

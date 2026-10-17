@@ -5,17 +5,39 @@ Este documento describe cómo SaludRed usa modelos de aprendizaje automático y 
 ## Flujo
 
 ```
-paciente ──► capa de seudonimización ──► servicio ml ──► reporte "pendiente" ──► firma clínica ──► historia / PDF
- (API)        (lista de permitidos         (sin base          (ai_reports,            (aprobar o          (solo
-               + HMAC del id)               de datos)          inmutable)              rechazar)           aprobados)
+signos vitales ──► (automático) ──► capa de seudonimización ──► servicio ml ──► reporte "pendiente" ──► firma clínica ──► historia / PDF
+ registrados        sin botón          (lista de permitidos         (sin base          (ai_reports,            (aprobar o          (solo
+ (API o FHIR)                           + HMAC del id)               de datos)          inmutable)              rechazar)           aprobados)
 ```
 
-1. **Solicitud.** Un médico o especialista pide el análisis de un paciente de su IPS (`POST /api/v1/patients/{id}/ai-analyses`).
-2. **Capa de seudonimización (R12).** La API arma el payload desde las últimas observaciones del paciente. Solo salen variables clínicas de la lista de permitidos, la edad en años enteros, el sexo y un seudónimo.
+1. **Disparo automático.** Nadie pide el análisis: se genera solo cuando el paciente tiene sus signos vitales registrados (ver «Análisis automático»). La ruta `POST /api/v1/patients/{id}/ai-analyses` se conserva para el contrato y para la prueba automática del curso (ver «La ruta manual»).
+2. **Capa de seudonimización (R12).** La API arma el payload desde las observaciones del encuentro. Solo salen variables clínicas de la lista de permitidos, la edad en años enteros, el sexo y un seudónimo.
 3. **Modelo.** La API llama al servicio `ml`, que está en su propio contenedor, no tiene puertos publicados y no accede a la base de datos. Responde con la probabilidad, el nivel (`critico` / `no_critico`), el umbral, la versión del modelo y las variables que más pesaron.
-4. **Reporte pendiente (R10).** La API guarda en `ai_reports` el payload exacto que se envió y la respuesta exacta, con estado `pendiente`. En este punto el reporte **no forma parte** de la historia clínica ni afecta la cola.
-5. **Firma clínica.** El médico o especialista lo revisa, puede escribir observaciones y lo aprueba (`aprobado`) o lo rechaza (`rechazado`, con motivo obligatorio). Solo se puede revisar desde `pendiente`; una segunda revisión responde 409.
-6. **Historia y PDF (R11).** Solo los reportes aprobados aparecen en `GET /api/v1/patients/{id}/clinical-record` (campo `reportes_ia`) y en el PDF `clinical-record.pdf`. Los pendientes y los rechazados quedan en la base y en la auditoría, pero no en la historia.
+4. **Reporte pendiente (R10).** La API guarda en `ai_reports` el payload exacto que se envió y la respuesta exacta, con estado `pendiente` y su origen (`automatico` o `manual`). En este punto el reporte **no forma parte** de la historia clínica ni afecta la cola. Un reporte crítico levanta la alerta (R20) y mueve los contadores (R18) por el evento `reporte_generado`, como siempre.
+5. **Aviso al clínico.** El médico responsable del paciente (o, si no hay, los médicos y especialistas de la IPS del último encuentro) recibe en su bandeja y en el canal en vivo «Nuevo análisis de IA pendiente de firma: <nombre del paciente>». Paciente y contable no reciben nada.
+6. **Firma clínica.** El médico o especialista lo revisa, **escribe su concepto clínico** (obligatorio en la interfaz, mínimo 10 caracteres) y lo aprueba (`aprobado`) o lo rechaza (`rechazado`, con motivo). Solo se puede revisar desde `pendiente`; una segunda revisión responde 409.
+7. **Historia y PDF (R11).** Solo los reportes aprobados aparecen en `GET /api/v1/patients/{id}/clinical-record` (campo `reportes_ia`, con el concepto del clínico en `observaciones`, quién firmó y cuándo) y en el PDF `clinical-record.pdf` (línea «Concepto clinico»). Los pendientes y los rechazados quedan en la base y en la auditoría, pero no en la historia.
+
+## Análisis automático
+
+El profesor pidió que el análisis **no dependa de un botón**: debe correr cuando el paciente entra. Se implementa como reactores del bus de eventos más trabajo en segundo plano; el código de las rutas no sabe nada de la IA (`app/services/ai_auto.py`, `app/events/flows.py`).
+
+**Cuándo corre**
+
+- **Signos vitales completos.** Cada observación guardada publica el hecho `observacion_registrada` (después del commit). El reactor `ai_auto_reactor` solo agenda trabajo: en un hilo aparte, con su propia sesión de base de datos (el mismo patrón que `fhir_autosync`), revisa el encuentro. Si tiene los seis signos vitales del modelo (frecuencia cardíaca, frecuencia respiratoria, SpO2, presión sistólica, presión diastólica y temperatura), hace el análisis. Las observaciones llegan una por una, así que las cinco primeras no hacen nada.
+- **Observaciones que llegan por FHIR.** El hook de HAPI publica `fhir_observacion`; el mismo reactor lo recoge y resuelve el encuentro de la observación almacenada. Cuentan igual que las locales.
+- **Respaldo del monitor.** Cada tick del monitor de alertas (cada 30 s) busca encuentros abiertos, sin reporte automático, cuya última variable utilizable lleva más de `AI_AUTO_GRACE_SECONDS` (120 s) sin cambiar, dentro de las últimas `AI_AUTO_LOOKBACK_MINUTES` (60; así activar la función no analiza en bloque los encuentros viejos del conjunto de datos). Si cumplen el mínimo de siempre (al menos 3 variables entre edad, sexo y signos), se analizan con lo que haya; las variables faltantes las imputa el modelo y quedan listadas en `imputed`. Hasta 10 por tick.
+- **Servicio `ml` caído.** No se escribe nada (ni reporte ni auditoría) y la escritura clínica que lo disparó no se ve afectada. La siguiente observación del encuentro o el siguiente tick del monitor lo reintenta.
+
+**Un solo reporte automático por encuentro y tipo.** Lo garantiza la base de datos: un índice único parcial `uq_ai_reports_auto_per_encounter` sobre `(encounter_id, kind) WHERE origin = 'automatico'`. Quien pierde una carrera recibe un conflicto y se retira sin escribir; además un candado en memoria evita llamar dos veces al modelo por el mismo encuentro, y antes de guardar se verifica que un reporte manual con el mismo payload no esté ya esperando firma.
+
+**Atribución.** `requested_by` es nulo en un reporte automático (pidió el sistema, no una persona) y `origin = automatico`. La auditoría registra la acción `AI_ANALYSIS` sin usuario y con `origen: automatico` en sus metadatos.
+
+**Interruptores.** `AI_AUTO_ANALYSIS` (por defecto `true`) apaga todo el disparo automático; `AI_AUTO_GRACE_SECONDS` y `AI_AUTO_LOOKBACK_MINUTES` ajustan el respaldo. Las pruebas fuerzan `AI_AUTO_ANALYSIS=false` y la encienden donde corresponde.
+
+### La ruta manual
+
+`POST /api/v1/patients/{id}/ai-analyses` sigue funcionando exactamente como pide el contrato (`ia_analizar`: responde 201 con `{"id", "estado": "pendiente", ...}`) porque la prueba automática la llama. El front ya no tiene botón para pedirla. La ruta es **tolerante a repeticiones**: si el paciente ya tiene un reporte `pendiente` hecho con un payload **idéntico** al que se enviaría ahora (incluido el reporte automático que está esperando firma), devuelve ese mismo reporte con el mismo código y la misma forma y no llama al modelo ni crea un duplicado. En cualquier otro caso (otro `triage_level`, signos nuevos, o el anterior ya revisado) crea un reporte nuevo con `origen: manual`.
 
 ### Por qué la IA no puede aprobar
 
@@ -25,6 +47,12 @@ paciente ──► capa de seudonimización ──► servicio ml ──► repo
 - No existe ruta `DELETE`: un reporte rechazado queda como evidencia de lo que el modelo dijo y de quién discrepó.
 - **Efecto sobre las camas.** Al aprobar un reporte de criticidad, la probabilidad aprobada pasa a ser el `criticality_score` de la solicitud de cama abierta del paciente (la cola ya ordena por prioridad, luego por ese puntaje y luego por antigüedad). Un reporte pendiente o rechazado nunca toca la cola. La auditoría de la aprobación registra la solicitud afectada y el puntaje escrito.
 - Si el servicio `ml` no responde, la solicitud de análisis devuelve 503 con un mensaje claro y **no se guarda nada** (ni reporte ni auditoría).
+
+### El concepto clínico es obligatorio al firmar
+
+El profesor pidió que aprobar o rechazar exija un texto con el juicio del clínico. La interfaz abre, tanto en «Aprobar» como en «Rechazar», un formulario con **un solo campo obligatorio, «Concepto clínico»** (mínimo 10 caracteres, con mensaje de validación). En una aprobación el texto viaja como `observaciones`; en un rechazo es el `motivo`. El reporte lo muestra de forma destacada con quién firmó y cuándo, y para los aprobados queda en la historia clínica JSON (`reportes_ia[].observaciones`, `firmado_por`, `reviewed_at`) y en el PDF («Concepto clinico: …»).
+
+En la **API** la obligatoriedad es una opción: `REQUIRE_REVIEW_NOTE`, por defecto `false` (mismo patrón que `REQUIRE_CLEANING_EVIDENCE`). El motivo: R10 dice que el clínico «puede agregar observaciones», así que la prueba automática del curso puede aprobar **sin** texto, y una API estricta por defecto la haría fallar. Con `false` la API es tolerante (el rechazo sigue exigiendo su `motivo` de 3 caracteres); con `true`, aprobar sin `observaciones` de al menos 10 caracteres responde **422** («Aprobar el reporte requiere el concepto clinico del profesional: escriba al menos 10 caracteres»), y rechazar con un `motivo` más corto también. La interfaz lo pide siempre, sin depender del interruptor.
 
 ## Minimización de datos (R12)
 
@@ -36,9 +64,9 @@ La función `build_criticality_payload` (`app/services/pseudonymization.py`) con
 | `age` | Años cumplidos (entero), calculados desde la fecha de nacimiento; la fecha no se envía |
 | `sex` | `male` / `female` (otros valores se omiten) |
 | `temperature_c`, `heart_rate`, `resp_rate`, `o2sat`, `sbp`, `dbp` | Última observación con los códigos LOINC 8310-5, 8867-4, 9279-1, 59408-5, 8480-6 y 8462-4, en la unidad esperada |
-| `acuity` | Nivel de triage ESI (1 a 5), opcional, lo informa el clínico al pedir el análisis |
+| `acuity` | Nivel de triage ESI (1 a 5), opcional; solo lo informa quien llama a la ruta manual con `triage_level`. El análisis automático no lo envía y el modelo lo imputa |
 
-**Nunca se envían:** nombre, apellido, documento, correo, teléfono, dirección, fecha de nacimiento ni el UUID real del paciente. Los valores faltantes se omiten; el servicio los imputa con la mediana de entrenamiento y devuelve la lista `imputed`.
+**Nunca se envían:** nombre, apellido, documento, correo, teléfono, dirección, fecha de nacimiento ni el UUID real del paciente. Los valores faltantes se omiten; el servicio los imputa con un imputador **KNN** ajustado con los datos de entrenamiento (para una variable categórica faltante usa la moda) y devuelve la lista `imputed`.
 
 Dos controles adicionales, uno en cada extremo:
 
@@ -49,11 +77,13 @@ El seudónimo es estable (el mismo paciente produce siempre el mismo valor, lo q
 
 ## Modelos
 
-Para cada tarea se entrenan y comparan **ocho modelos supervisados** con el mismo protocolo, y el servicio `ml` atiende al ganador. Las semillas son fijas (2026) y todo se entrena al construir la imagen (`RUN python train.py`, unos 3 minutos en el servidor del proyecto), de modo que cada imagen lleva exactamente los modelos que describe su `metrics.json`. La comparación completa se consulta en `GET /api/v1/ai/models` (sección `comparacion` de cada tarea), se ve en Indicadores → «Modelos de IA» y se genera como informe legible en `ml/REPORTE_MODELOS.md`.
+Para cada tarea se entrenan y comparan **diez modelos supervisados** con el mismo protocolo, y el servicio `ml` atiende al ganador. Las semillas son fijas (2026) y todo se entrena al construir la imagen (`RUN python train.py`; la construcción completa de la imagen tardó 166 segundos en el servidor del proyecto), de modo que cada imagen lleva exactamente los modelos que describe su `metrics.json`. La comparación completa se consulta en `GET /api/v1/ai/models` (sección `comparacion` de cada tarea), se ve en Indicadores → «Modelos de IA» y se genera como informe legible en `ml/REPORTE_MODELOS.md`.
 
 ### Comparación de modelos
 
-**Modelos:** regresión logística (estandarizada, L2, C = 1), KNN (k elegido por validación cruzada entre 3, 5, 9, 15 y 25), SVM con kernel RBF (C entre 0,25, 1 y 4, probabilidades con `probability=True`), árbol de decisión (`max_depth` entre 2 y 6, hojas de al menos 5 filas), random forest (bagging, 200 árboles), gradient boosting de scikit-learn (`GradientBoostingClassifier`, profundidad 2, entre 50 y 200 árboles; no se usa XGBoost), stacking (logística + random forest + boosting, meta-modelo logístico) y una red neuronal pequeña (`MLPClassifier`, una capa de 16 neuronas, estandarizada). Las cuadrículas son pequeñas a propósito para que la construcción de la imagen sea corta.
+**Modelos:** regresión logística (estandarizada, L2, C = 1), KNN (k elegido por validación cruzada entre 3, 5, 9, 15 y 25), SVM con kernel RBF (**C y gamma se ajustan juntos** en una malla de C ∈ {0,25, 1, 4} × gamma ∈ {`scale`, 0,01, 0,1}, probabilidades con `probability=True`), árbol de decisión (`max_depth` entre 2 y 6, hojas de al menos 5 filas), random forest (bagging, 200 árboles), gradient boosting de scikit-learn (`GradientBoostingClassifier`, profundidad 2, entre 50 y 200 árboles), **LightGBM** (`LGBMClassifier`, 50 o 150 árboles × 4 o 15 hojas), **XGBoost** (`XGBClassifier`, 50 o 150 árboles × profundidad 2 o 4), stacking (logística + random forest + boosting, meta-modelo logístico) y una red neuronal pequeña (`MLPClassifier`, una capa de 16 neuronas). CatBoost no se incluyó: su ventaja es el manejo nativo de variables categóricas con muchas categorías y aquí hay pocas, por lo que no justifica otra dependencia en la imagen. Las cuadrículas son pequeñas a propósito para que la construcción de la imagen sea corta.
+
+**Imputación explícita.** Cada modelo es un pipeline `estandarizar → imputar → modelo`: los valores numéricos faltantes los llena un imputador **KNN** (`KNNImputer`, k = 5) que se ajusta solo con las filas de entrenamiento de cada partición y se aplica después de estandarizar, para que las distancias pesen igual todas las variables. Ningún modelo depende de su manejo interno de valores faltantes (sería una caja negra). Una variable categórica faltante toma la moda del entrenamiento. En el servicio, un dato ausente (por ejemplo el nivel de triage) pasa por el mismo imputador ya ajustado.
 
 **Protocolo (igual para todos los modelos y las dos tareas):**
 
@@ -62,11 +92,11 @@ Para cada tarea se entrenan y comparan **ocho modelos supervisados** con el mism
 3. El **umbral de cada modelo se elige con las predicciones fuera de partición** (nunca con un modelo ajustado sobre todos los datos): el umbral más alto cuya sensibilidad fuera de partición alcanza el objetivo de la tarea (0,85 en criticidad, 0,80 en limpieza). Esto corrige la debilidad de la tarea de la semana 9, donde el umbral se tomaba sobre el conjunto de prueba.
 4. Por modelo y tarea se informan el AUC (media ± desviación entre repeticiones), el F1, la precisión, la sensibilidad y la especificidad al umbral elegido, la **matriz de confusión** fuera de partición (promedio por repetición) y el tiempo de ajuste.
 
-**Regla del ganador.** La métrica principal es el **F1** fuera de partición al umbral elegido (con desbalance, la exactitud engaña: un modelo que marcara a todos tendría exactitud alta). Entre los modelos que cumplen la sensibilidad objetivo gana el de mayor F1; si otro queda a menos de **un error estándar** del F1 del mejor (error estándar de los F1 por partición), la diferencia no se distingue del ruido y gana el más simple y explicable (orden: regresión logística, árbol, KNN, random forest, boosting, SVM, red neuronal, stacking). La regla y su motivo quedan en `metrics.json` (`comparacion.rule` y `comparacion.decision`). Nota de honestidad: una primera corrida con un margen fijo de 0,01 de F1 elegía un árbol de decisión con el AUC más bajo (0,556); se cambió a la regla del error estándar, que no depende de un número arbitrario.
+**Regla del ganador.** La métrica principal es el **F1** fuera de partición al umbral elegido (con desbalance, la exactitud engaña: un modelo que marcara a todos tendría exactitud alta). Entre los modelos que cumplen la sensibilidad objetivo gana el de mayor F1; si otro queda a menos de **un error estándar** del F1 del mejor (error estándar de los F1 por partición), la diferencia no se distingue del ruido y gana el más simple y explicable (orden: regresión logística, árbol, KNN, random forest, gradient boosting, LightGBM, XGBoost, SVM, red neuronal, stacking). La regla y su motivo quedan en `metrics.json` (`comparacion.rule` y `comparacion.decision`). Nota de honestidad: una primera corrida con un margen fijo de 0,01 de F1 elegía un árbol de decisión con el AUC más bajo (0,556); se cambió a la regla del error estándar, que no depende de un número arbitrario.
 
 **Importancia de variables.** Importancia por permutación sobre filas fuera de partición (caída del AUC al mezclar una variable, bloque completo para las categóricas), para el mejor modelo basado en árboles, y **razones de momios** de la regresión logística: `exp(coeficiente)` por desviación estándar para las variables numéricas y, para una categoría, la razón de estar en ella frente a no estarlo. Los **momios** (odds) son la probabilidad de que ocurra el evento dividida entre la de que no ocurra; la **razón de momios** compara los momios entre dos situaciones (1 = sin efecto).
 
-**Qué recibe el reporte.** Si el ganador es la regresión logística, `top_features` trae la contribución exacta `coeficiente × valor estandarizado` (log-odds). Si el ganador fuera cualquier otro modelo, el servicio calcula una explicación **local** por oclusión: cuánto cambia la probabilidad de ese paciente al reemplazar cada variable por su valor típico de entrenamiento (positivo = sube la probabilidad). El campo `explanation` de la respuesta dice cuál se usó, y `model_version` lleva la familia del modelo (por ejemplo `criticality-lr-1.0-…`).
+**Qué recibe el reporte.** Si el ganador es la regresión logística, `top_features` trae la contribución exacta `coeficiente × valor estandarizado` (log-odds). Si el ganador fuera cualquier otro modelo, el servicio calcula una explicación **local** por oclusión: cuánto cambia la probabilidad de ese paciente al reemplazar cada variable por un valor imputado con pacientes parecidos del entrenamiento (positivo = sube la probabilidad). El campo `explanation` de la respuesta dice cuál se usó, y `model_version` lleva la familia del modelo (por ejemplo `criticality-lr-1.0-…`).
 
 ### 1. Criticidad del paciente
 
@@ -81,15 +111,19 @@ Para cada tarea se entrenan y comparan **ocho modelos supervisados** con el mism
 | Modelo | AUC | F1 | Precisión | Sensibilidad | Especificidad | Umbral | TN | FP | FN | TP |
 |---|---|---|---|---|---|---|---|---|---|---|
 | **Regresión logística (ganador)** | 0,623 ± 0,038 | 0,746 | 0,666 | 0,850 | 0,164 | 0,415 | 10,7 | 54,3 | 19,0 | 108,0 |
-| Árbol de decisión | 0,556 ± 0,017 | 0,750 | 0,669 | 0,856 | 0,169 | 0,435 | 11,0 | 54,0 | 18,3 | 108,7 |
+| Árbol de decisión | 0,554 ± 0,016 | 0,754 | 0,676 | 0,853 | 0,200 | 0,450 | 13,0 | 52,0 | 18,7 | 108,3 |
 | KNN | 0,585 ± 0,018 | 0,753 | 0,671 | 0,861 | 0,174 | 0,330 | 11,3 | 53,7 | 17,7 | 109,3 |
 | Random forest (bagging) | 0,576 ± 0,035 | 0,760 | 0,686 | 0,853 | 0,236 | 0,490 | 15,3 | 49,7 | 18,7 | 108,3 |
-| Gradient boosting | 0,581 ± 0,025 | 0,752 | 0,674 | 0,850 | 0,195 | 0,465 | 12,7 | 52,3 | 19,0 | 108,0 |
-| SVM (kernel RBF) | 0,538 ± 0,021 | 0,756 | 0,680 | 0,853 | 0,215 | 0,365 | 14,0 | 51,0 | 18,7 | 108,3 |
+| Gradient boosting | 0,581 ± 0,024 | 0,752 | 0,674 | 0,850 | 0,195 | 0,465 | 12,7 | 52,3 | 19,0 | 108,0 |
+| LightGBM | 0,558 ± 0,027 | 0,747 | 0,667 | 0,850 | 0,169 | 0,440 | 11,0 | 54,0 | 19,0 | 108,0 |
+| XGBoost | 0,574 ± 0,013 | 0,749 | 0,669 | 0,850 | 0,179 | 0,415 | 11,7 | 53,3 | 19,0 | 108,0 |
+| SVM (kernel RBF) | 0,550 ± 0,048 | 0,751 | 0,673 | 0,850 | 0,195 | 0,395 | 12,7 | 52,3 | 19,0 | 108,0 |
 | Red neuronal (MLP) | 0,616 ± 0,034 | 0,753 | 0,675 | 0,850 | 0,200 | 0,430 | 13,0 | 52,0 | 19,0 | 108,0 |
-| Stacking (LR + RF + GB) | 0,573 ± 0,035 | 0,759 | 0,684 | 0,853 | 0,231 | 0,430 | 15,0 | 50,0 | 18,7 | 108,3 |
+| Stacking (LR + RF + GB) | 0,574 ± 0,035 | 0,758 | 0,684 | 0,850 | 0,231 | 0,430 | 15,0 | 50,0 | 19,0 | 108,0 |
 
-**Por qué ganó la regresión logística.** El F1 más alto es el del random forest (0,760), pero la diferencia con la logística (0,746) es de 0,014, menor que un error estándar del F1 (0,023): todos los modelos quedan entre 0,746 y 0,760, un empate práctico. Con empate gana el más simple y explicable, y además la logística tiene el AUC más alto de los ocho (0,623). Todos los modelos cumplen la sensibilidad objetivo por construcción del umbral, y ninguno supera el F1 de la línea base «marcar a todos» (0,796): con 66 % de ingresos, marcar a todos ya da sensibilidad 1,0 y precisión 0,661. Lo que aportan los modelos no es F1 sino descartar algunos pacientes (especificidad de 0,16 a 0,24).
+**SVM, C y gamma juntos.** El valor más elegido en los folds fue C = 1 y gamma = 0,01 (AUC 0,550 ± 0,048, F1 0,751). **Boosting:** gradient boosting AUC 0,581 y F1 0,752; LightGBM 0,558 y 0,747; XGBoost 0,574 y 0,749.
+
+**Por qué ganó la regresión logística.** El F1 más alto es el del random forest (0,760), pero la diferencia con la logística (0,746) es de 0,014, menor que un error estándar del F1 (0,023): todos los modelos quedan entre 0,746 y 0,760, un empate práctico. Con empate gana el más simple y explicable, y además la logística tiene el AUC más alto de los diez (0,623). Todos los modelos cumplen la sensibilidad objetivo por construcción del umbral, y ninguno supera el F1 de la línea base «marcar a todos» (0,796): con 66 % de ingresos, marcar a todos ya da sensibilidad 1,0 y precisión 0,661. Lo que aportan los modelos no es F1 sino descartar algunos pacientes (especificidad de 0,16 a 0,24).
 
 **Matriz de confusión del ganador** (promedio por repetición, umbral 0,415):
 
@@ -100,9 +134,11 @@ Para cada tarea se entrenan y comparan **ocho modelos supervisados** con el mism
 
 **Resultados del ganador:** AUC **0,623** (desviación 0,038 entre repeticiones); sin aumento sintético (ablación) 0,634; umbral clínico **0,415**; sensibilidad 0,850, precisión 0,666, F1 0,746, especificidad 0,164; fracción de pacientes marcados como críticos 0,845.
 
-**Variables que más pesan.** Importancia por permutación del random forest (caída del AUC): presión sistólica 0,046, temperatura 0,021, frecuencia respiratoria 0,006, saturación de oxígeno 0,002, edad −0,001 (ruido). Razones de momios de la regresión logística, por desviación estándar: saturación de oxígeno 0,59 (más saturación, los momios de ser crítico bajan 41 %), presión sistólica 0,60, nivel ESI 0,63 (un ESI más alto es menos urgente), temperatura 1,29 (suben 29 %) y frecuencia respiratoria 1,21. Los signos coinciden con la clínica.
+**Variables que más pesan.** Importancia por permutación del random forest (caída del AUC): presión sistólica 0,046, temperatura 0,020, frecuencia respiratoria 0,005, saturación de oxígeno 0,001, edad −0,002 (ruido). Una sola variable no domina: la presión sistólica pesa más que las demás, pero con una caída de apenas 0,046 del AUC. Razones de momios de la regresión logística, por desviación estándar: saturación de oxígeno 0,59 (más saturación, los momios de ser crítico bajan 41 %), presión sistólica 0,60, nivel ESI 0,63 (un ESI más alto es menos urgente), temperatura 1,29 (suben 29 %) y frecuencia respiratoria 1,21. Los signos coinciden con la clínica.
 
 **Lectura honesta.** El modelo tiene una señal débil: con solo signos vitales de triage, edad y sexo en 192 filas, el AUC ronda 0,62 y ningún modelo, sencillo o complejo, lo mejora de forma distinguible (con 192 filas un modelo más flexible no tiene de dónde aprender). A su umbral, la precisión (0,666) apenas supera la de marcar a todos como críticos (0,661), y el 85 % de los pacientes queda marcado. El aumento sintético no mejora el AUC (0,623 con él, 0,634 sin él, dentro del ruido); se mantiene porque es el método del proyecto y se reporta la ablación. Por todo esto el reporte es un **apoyo a la priorización que un clínico firma**, no un diagnóstico, y el puntaje solo desempata dentro de la misma prioridad clínica. Con valores claramente graves el modelo sí separa: SpO2 86 %, FC 118, FR 28, PAS 92, temperatura 38,9 °C, 78 años da una probabilidad de 0,999, contra 0,272 para un paciente de 40 años con signos normales (FC 75, FR 14, SpO2 99 %, PAS 120, PAD 78, 36,6 °C, ESI 4).
+
+**Imputación: mediana frente a KNN (criticidad).** Los CSV de entrenamiento no tienen ninguna celda vacía (0 filas con faltantes), así que con ellos ambos métodos darían lo mismo. Para medir la diferencia se borró al azar el 14,4 % de las celdas numéricas (las mismas para los dos métodos, sin aumento de datos), con el mismo protocolo y el imputador ajustado dentro de cada partición. Regresión logística: mediana AUC 0,621, F1 0,765; KNN (k = 5) AUC 0,631, F1 0,759 (error estándar del F1 0,016). La diferencia de F1 (0,006) es menor que un error estándar, así que KNN no es peor y se usa; el AUC es 0,010 mayor con KNN.
 
 ### Justificación clínica del umbral
 
@@ -136,15 +172,19 @@ Sensibilidad, precisión y AUC por subgrupo, al umbral 0,415, sobre las filas re
 | Modelo | AUC | F1 | Precisión | Sensibilidad | Especificidad | Umbral | TN | FP | FN | TP |
 |---|---|---|---|---|---|---|---|---|---|---|
 | **Regresión logística (ganador)** | 0,823 ± 0,002 | 0,525 | 0,389 | 0,806 | 0,671 | 0,150 | 426,0 | 209,0 | 32,0 | 133,0 |
-| Árbol de decisión | 0,778 ± 0,003 | 0,487 | 0,349 | 0,806 | 0,609 | 0,115 | 386,7 | 248,3 | 32,0 | 133,0 |
+| Árbol de decisión | 0,777 ± 0,003 | 0,487 | 0,349 | 0,806 | 0,609 | 0,115 | 386,7 | 248,3 | 32,0 | 133,0 |
 | KNN | 0,783 ± 0,003 | 0,507 | 0,368 | 0,814 | 0,636 | 0,160 | 404,0 | 231,0 | 30,7 | 134,3 |
-| Random forest (bagging) | 0,808 ± 0,004 | 0,520 | 0,384 | 0,804 | 0,665 | 0,180 | 422,3 | 212,7 | 32,3 | 132,7 |
+| Random forest (bagging) | 0,808 ± 0,004 | 0,519 | 0,383 | 0,804 | 0,664 | 0,180 | 421,3 | 213,7 | 32,3 | 132,7 |
 | Gradient boosting | 0,807 ± 0,000 | 0,507 | 0,370 | 0,806 | 0,643 | 0,145 | 408,3 | 226,7 | 32,0 | 133,0 |
-| SVM (kernel RBF) | 0,770 ± 0,007 | 0,478 | 0,339 | 0,810 | 0,590 | 0,140 | 374,3 | 260,7 | 31,3 | 133,7 |
+| LightGBM | 0,808 ± 0,009 | 0,499 | 0,361 | 0,808 | 0,628 | 0,140 | 399,0 | 236,0 | 31,7 | 133,3 |
+| XGBoost | 0,810 ± 0,006 | 0,507 | 0,371 | 0,804 | 0,645 | 0,150 | 409,7 | 225,3 | 32,3 | 132,7 |
+| SVM (kernel RBF) | 0,779 ± 0,006 | 0,457 | 0,315 | 0,832 | 0,530 | 0,160 | 336,3 | 298,7 | 27,7 | 137,3 |
 | Red neuronal (MLP) | 0,812 ± 0,004 | 0,521 | 0,386 | 0,802 | 0,669 | 0,155 | 424,7 | 210,3 | 32,7 | 132,3 |
-| Stacking (LR + RF + GB) | 0,816 ± 0,003 | 0,521 | 0,385 | 0,802 | 0,668 | 0,135 | 424,0 | 211,0 | 32,7 | 132,3 |
+| Stacking (LR + RF + GB) | 0,816 ± 0,003 | 0,515 | 0,378 | 0,808 | 0,655 | 0,130 | 415,7 | 219,3 | 31,7 | 133,3 |
 
-**Por qué ganó la regresión logística.** Tiene el F1 más alto (0,525; error estándar 0,013) y también el AUC más alto; es además la más simple, así que no hace falta recurrir al desempate. Aquí sí hay señal que aprovechar: todos los modelos superan la línea base de marcar a todos (F1 0,342, precisión 0,206). Los modelos de ensamble (random forest 0,520, MLP 0,521, stacking 0,521) quedan dentro del ruido. Como los datos son simulados, el resultado describe el generador y no demuestra que la logística sea mejor con datos reales.
+**SVM, C y gamma juntos.** El valor más elegido en los folds fue C = 0,25 y gamma = 0,01 (AUC 0,779, F1 0,457). Aun con gamma ajustado, es el SVM el de menor F1 en limpieza: la malla se elige por AUC dentro del fold y el umbral por sensibilidad, y a su umbral marca más casos de los necesarios (especificidad 0,530). **Boosting:** gradient boosting AUC 0,807 y F1 0,507; LightGBM 0,808 y 0,499; XGBoost 0,810 y 0,507. Las tres librerías de boosting quedan por debajo de la logística en F1.
+
+**Por qué ganó la regresión logística.** Tiene el F1 más alto (0,525; error estándar 0,013) y también el AUC más alto; es además la más simple, así que no hace falta recurrir al desempate. Aquí sí hay señal que aprovechar: todos los modelos superan la línea base de marcar a todos (F1 0,342, precisión 0,206). Los modelos de ensamble (random forest 0,519, MLP 0,521, stacking 0,515) quedan dentro del ruido. Como los datos son simulados, el resultado describe el generador y no demuestra que la logística sea mejor con datos reales.
 
 **Matriz de confusión del ganador** (promedio por repetición, umbral 0,15):
 
@@ -155,7 +195,19 @@ Sensibilidad, precisión y AUC por subgrupo, al umbral 0,415, sobre las filas re
 
 **Resultados del ganador:** AUC **0,823** (desviación 0,002); umbral 0,15; sensibilidad 0,806, precisión 0,389, F1 0,525, especificidad 0,671; fracción marcada 0,428.
 
-**Variables que más pesan.** Importancia por permutación del random forest (caída del AUC): aislamiento 0,091, servicio 0,038, cambio de cortinas 0,018, personal de limpieza en turno 0,010, camas pendientes 0,007. Razones de momios de la logística: por cada desviación estándar más de camas pendientes de limpieza, los momios de retraso suben 66 % (1,66); estar en aislamiento por esporas multiplica los momios por 6,65 frente a no estarlo; estar en UCI Adultos, por 2,34; estar en Urgencias, por 0,25 (bajan 75 %); el cambio de cortinas, 1,42 por desviación estándar.
+**Variables que más pesan.** Importancia por permutación del random forest (caída del AUC): aislamiento 0,092, servicio 0,039, cambio de cortinas 0,018, personal de limpieza en turno 0,011, camas pendientes 0,007. El aislamiento es la variable que más pesa: si el modelo dependiera demasiado de ella habría que revisar si el generador (datos simulados) la sobrerrepresenta. Razones de momios de la logística: por cada desviación estándar más de camas pendientes de limpieza, los momios de retraso suben 66 % (1,66); estar en aislamiento por esporas multiplica los momios por 6,65 frente a no estarlo; estar en UCI Adultos, por 2,34; estar en Urgencias, por 0,25 (bajan 75 %); el cambio de cortinas, 1,42 por desviación estándar.
+
+**Imputación: mediana frente a KNN (limpieza).** Tampoco hay celdas vacías en los 800 eventos (0 filas con faltantes). Con el 14,3 % de las celdas numéricas borradas al azar y el mismo protocolo, la regresión logística da AUC 0,817 y F1 0,527 con mediana, y AUC 0,817 y F1 0,525 con KNN (error estándar del F1 0,013). La diferencia es 0,002, mucho menor que un error estándar: empate, y se usa KNN.
+
+**Regresión (variable continua): minutos hasta que la cama queda lista.** Con las mismas variables y la misma validación cruzada (3 × 5 particiones, imputación KNN dentro de la partición), sobre `minutes_to_ready` (media 73,9 min, mediana 71,3, rango 27,1 a 147,2):
+
+| Modelo | MAE (min) | DE del MAE | R² |
+|---|---|---|---|
+| Línea base (promedio) | 17,07 | 0,84 | −0,007 |
+| **Regresión lineal (en servicio)** | 11,19 | 0,88 | 0,530 |
+| Random forest (regresión) | 11,89 | 0,91 | 0,465 |
+
+La regresión lineal se equivoca en promedio 11,19 minutos, 5,88 menos que el promedio, y gana por tener el MAE más bajo (y ser la más simple). Se atiende en `POST /predict/cleaning-minutes` del servicio `ml` (mismo contrato de entrada que `cleaning-delay`, rechaza campos extra con 422); la API y el front no lo usan todavía. Los datos son simulados.
 
 Las métricas describen la simulación, no hospitales reales. Una alerta de cama tarde es barata de descartar, pero se prefiere detectar la mayoría de los retrasos; por eso el umbral baja a 0,15.
 
@@ -178,7 +230,7 @@ El modelo casi no detecta retrasos en Urgencias (6 casos en total, sensibilidad 
 
 | Acción | Cuándo | Metadatos |
 |---|---|---|
-| `AI_ANALYSIS` | Se crea un reporte pendiente | `report_id`, `patient_id`, seudónimo, versión del modelo, probabilidad |
+| `AI_ANALYSIS` | Se crea un reporte pendiente (a mano o automático) | `report_id`, `patient_id`, seudónimo, versión del modelo, probabilidad, `origen` (`automatico` / `manual`), `encounter_id`; sin usuario cuando es automático |
 | `REPORT_APPROVED` | Firma de aprobación | `report_id`, `patient_id`, solicitud de cama y puntaje escritos, si hubo |
 | `REPORT_REJECTED` | Firma de rechazo | `report_id`, `patient_id`, motivo |
 | `RECORD_VIEWED` | Se consulta la historia en JSON | `patient_id`, ids de los reportes incluidos |
@@ -198,11 +250,11 @@ Las citas indican a qué se orienta cada control y no constituyen una opinión j
 
 ## Limitaciones
 
-- 192 filas de un solo hospital de Estados Unidos: el modelo de criticidad no está calibrado para la población colombiana ni validado clínicamente. Con tan pocas filas, las diferencias de F1 entre los ocho modelos están dentro del ruido (error estándar de 0,02), así que el ganador se decide por simplicidad y no por rendimiento.
+- 192 filas de un solo hospital de Estados Unidos: el modelo de criticidad no está calibrado para la población colombiana ni validado clínicamente. Con tan pocas filas, las diferencias de F1 entre los diez modelos están dentro del ruido (error estándar de 0,02), así que el ganador se decide por simplicidad y no por rendimiento.
 - Los hiperparámetros se ajustaron con cuadrículas pequeñas y la comparación usa 3 repeticiones de validación cruzada, para que la imagen se construya en pocos minutos; con más repeticiones o cuadrículas más amplias los números cambiarían ligeramente. Las probabilidades de KNN, árbol y SVM no están calibradas.
 - El umbral y las métricas al umbral salen de las mismas predicciones fuera de partición; la sensibilidad objetivo se cumple por construcción. Una estimación sin ese sesgo exigiría una partición externa adicional.
 - La explicación de un modelo distinto de la logística (oclusión) es local y aproximada: no suma como las contribuciones lineales ni detecta interacciones entre variables.
 - `anchor_age` de MIMIC es la edad en el año ancla del paciente, no en la fecha exacta de cada visita; la edad tiene un error de pocos años.
 - El modelo de limpieza se entrena y se evalúa con datos simulados.
-- La imputación de variables no registradas (por ejemplo el nivel ESI) reduce la información de la predicción; el reporte lista siempre qué se imputó.
+- La imputación de variables no registradas (por ejemplo el nivel ESI) reduce la información de la predicción; el reporte lista siempre qué se imputó. Como los datos de entrenamiento no tienen faltantes, la comparación mediana frente a KNN se hizo borrando celdas al azar (MCAR), que es más benigno que los faltantes reales, que no suelen ser aleatorios.
 - El campo `critico` del reporte dispara la alerta crítica (R20) en cuanto el análisis crea el reporte (no al aprobarlo). Con el 85 % de los pacientes marcados como críticos, la alerta se limita a una activa por paciente. Los valores clínicos que garantizan el disparo, el procedimiento de reconocimiento y el escalamiento están en `docs/EVENTOS.md` (sección «Contrato `paciente_critico`»).

@@ -66,8 +66,8 @@ EPS
 | `hapi` | Servidor HAPI FHIR R4 v7.4.0. Avisa a la API mediante una `Subscription` rest-hook cuando llega una `Observation`. | Puerto 8080 |
 | PostgreSQL de la aplicación | Fuente de verdad operativa y clínica. En el despliegue es una base gestionada en Neon; en desarrollo, el contenedor `db`. | `db`: puerto 5433 |
 | PostgreSQL de HAPI | Base propia del servidor FHIR, separada de la de la aplicación. En el despliegue es una base en Neon; en desarrollo, el contenedor `hapi-db`. | Solo red interna |
-| `tunnel-web`, `tunnel-api`, `tunnel-fhir` | Túneles rápidos de Cloudflare (perfil `public`) que publican la interfaz, la API y el servidor FHIR con URL HTTPS. | Conexión saliente |
-| `orthanc` | Servidor PACS (perfil `pacs`, opcional) con los píxeles de las imágenes. El navegador nunca le habla: toda imagen pasa por la API. | `127.0.0.1:8042` |
+| `tunnel-web`, `tunnel-api`, `tunnel-fhir` | Túneles rápidos de Cloudflare (`cloudflared`, arrancan con el mismo `up -d`) que publican la interfaz, la API y el servidor FHIR con URL HTTPS. | Conexión saliente |
+| `orthanc` | Servidor PACS con los píxeles de las imágenes. El navegador nunca le habla: toda imagen pasa por la API. | `127.0.0.1:8042` |
 
 Decisiones que conviene conocer:
 
@@ -87,7 +87,7 @@ flowchart LR
     U["Navegador<br/>(médico, especialista, contable, admin, paciente)"]
     P["Postman, laboratorio<br/>o sistema externo"]
 
-    subgraph PUB["Cloudflare - perfil public"]
+    subgraph PUB["Cloudflare - cloudflared"]
         TW["tunnel-web"]
         TA["tunnel-api"]
         TF["tunnel-fhir"]
@@ -99,7 +99,7 @@ flowchart LR
         ML["ml<br/>modelos de IA"]
         MONGO[("mongo<br/>facturas")]
         HAPI["hapi<br/>HAPI FHIR R4"]
-        ORT["orthanc<br/>PACS - perfil pacs"]
+        ORT["orthanc<br/>PACS"]
     end
 
     subgraph NEON["Bases gestionadas en Neon"]
@@ -141,11 +141,12 @@ sequenceDiagram
 
     rect rgb(235, 245, 255)
     Note over M,BUS: 1. Análisis, alerta crítica y reconocimiento
-    M->>API: POST /patients/{id}/ai-analyses
+    M->>API: POST /observations (el último signo vital)
+    API->>BUS: observacion_registrada
+    BUS->>API: análisis automático en segundo plano
     API->>ML: variables minimizadas y seudónimo
     ML-->>API: probabilidad y nivel
-    API-->>M: 201 reporte pendiente
-    API->>BUS: reporte_generado
+    API->>BUS: reporte_generado (reporte pendiente, origen automático)
     BUS-->>M: alerta_critica y pendientes_actualizados (WebSocket)
     M->>API: POST /alerts/{id}/acknowledge con nota
     API->>BUS: alerta_reconocida
@@ -266,7 +267,7 @@ Variables opcionales, solo por nombre (valores por defecto en `.env.example` y `
 `ORTHANC_URL`, `ORTHANC_USER`, `ORTHANC_PASSWORD`, `ORTHANC_TIMEOUT_SECONDS`, `ML_SERVICE_URL`,
 `MONGO_ROOT_USER`, `MONGO_DB`, `CORS_ALLOWED_ORIGINS`, `REQUIRE_CLEANING_EVIDENCE`,
 `ALERT_ESCALATION_ENABLED`, `ALERT_ESCALATION_MINUTES`, `ALERT_MONITOR_INTERVAL_SECONDS`,
-`BED_CLEANING_ALERT_MINUTES` y `LOG_LEVEL`.
+`BED_CLEANING_ALERT_MINUTES`, `AI_AUTO_ANALYSIS`, `AI_AUTO_GRACE_SECONDS`, `REQUIRE_REVIEW_NOTE` y `LOG_LEVEL`.
 
 Si el despliegue usa una base gestionada (Neon), definir `DATABASE_URL` con el prefijo
 `postgresql+psycopg://` y `?sslmode=require`; para HAPI, `HAPI_DATABASE_URL` en formato JDBC. Con bases
@@ -275,18 +276,14 @@ gestionadas, los contenedores `db` y `hapi-db` quedan sin uso.
 ### 2. Levantar los servicios
 
 ```bash
-docker compose up -d --build                      # db, api, ml, mongo, web, hapi, hapi-db
-docker compose --profile public up -d             # además, los tres túneles de Cloudflare
-docker compose --profile pacs up -d orthanc       # opcional: el PACS
+docker compose up -d --build     # TODO: db, api, ml, mongo, web, hapi, hapi-db, orthanc y los tres túneles
 ```
 
-Un solo `docker compose up -d` levanta la aplicación completa sin túneles ni PACS. Los perfiles son:
-
-| Perfil | Servicios | Cuándo |
-|---|---|---|
-| (ninguno) | `db`, `api`, `ml`, `mongo`, `web`, `hapi`, `hapi-db` | siempre |
-| `public` | `tunnel-web`, `tunnel-api`, `tunnel-fhir` | para publicar el sistema en internet |
-| `pacs` | `orthanc` | para trabajar con imágenes médicas |
+Un solo `docker compose up -d` levanta **todo**: API, PostgreSQL, MongoDB, servidor FHIR, PACS (Orthanc), servicio
+de IA (`ml`), interfaz web (nginx) y `cloudflared` (`tunnel-web`, `tunnel-api`, `tunnel-fhir`). El archivo no usa
+perfiles (`profiles`) y una prueba (`tests/test_deploy_constraints.py`) lo exige. La API no espera a Orthanc: solo
+le habla cuando se pide una imagen. Cada túnel espera a que su destino esté sano. Las URL públicas se leen de los
+registros de los túneles (`docker compose logs tunnel-web | findstr trycloudflare`) y cambian en cada reinicio.
 
 Al construirse, el servicio `ml` entrena sus modelos con los CSV de `ml/data`. El servidor FHIR tarda entre 30 y
 60 segundos en el primer arranque; está listo cuando `curl http://localhost:8080/fhir/metadata` responde.
