@@ -1,0 +1,128 @@
+%PDF-1.3
+1 0 obj
+<<
+/Count 1
+/Kids [3 0 R]
+/MediaBox [0 0 595.28 841.89]
+/Type /Pages
+>>
+endobj
+2 0 obj
+<<
+/OpenAction [3 0 R /FitH null]
+/PageLayout /OneColumn
+/Pages 1 0 R
+/Type /Catalog
+>>
+endobj
+3 0 obj
+<<
+/Contents 4 0 R
+/Parent 1 0 R
+/Resources 8 0 R
+/Type /Page
+>>
+endobj
+4 0 obj
+<<
+/Length 1827
+>>
+stream
+2 J
+0.57 w
+BT /F1 16.00 Tf ET
+BT 53.86 771.89 Td (Historia clinica) Tj ET
+BT /F2 9.00 Tf ET
+BT 53.86 752.73 Td (Generada: 2026-10-19 02:42 UTC) Tj ET
+BT /F1 12.00 Tf ET
+BT 53.86 724.90 Td (Datos del paciente) Tj ET
+BT /F2 10.00 Tf ET
+BT /F1 11.00 Tf ET
+BT 53.86 705.36 Td (Nicolas Vargas) Tj ET
+BT /F2 10.00 Tf ET
+BT 53.86 689.36 Td (Documento: CC 1032450959) Tj ET
+BT 53.86 673.77 Td (Fecha de nacimiento: 1990-08-08    Sexo: male) Tj ET
+BT 53.86 658.18 Td (Telefono: 3074006377) Tj ET
+BT 53.86 642.59 Td (Direccion: Calle 17 # 27 - 7) Tj ET
+BT /F1 12.00 Tf ET
+BT 53.86 614.35 Td (Observaciones \(9\)) Tj ET
+BT /F2 10.00 Tf ET
+BT 53.86 595.82 Td (2026-10-18 17:16  Systolic blood pressure: 140.000 mm[Hg]  \(LOINC 8480-6\)) Tj ET
+BT 53.86 580.23 Td (2026-10-18 17:02  Heart rate: 95.000 /min  \(LOINC 8867-4\)) Tj ET
+BT 53.86 564.64 Td (2026-10-18 16:58  Body temperature: 36.500 Cel  \(LOINC 8310-5\)) Tj ET
+BT 53.86 549.05 Td (2026-10-18 16:27  Diastolic blood pressure: 83.000 mm[Hg]  \(LOINC 8462-4\)) Tj ET
+BT 53.86 533.46 Td (2026-10-18 16:04  Body weight: 95.900 kg  \(LOINC 29463-7\)) Tj ET
+BT 53.86 517.87 Td (2026-10-18 15:48  Body height: 180.000 cm  \(LOINC 8302-2\)) Tj ET
+BT 53.86 502.28 Td (2026-10-18 15:30  Glucose [Mass/volume] in Blood: 211.000 mg/dL  \(LOINC 2339-0\)) Tj ET
+BT 53.86 486.69 Td (2026-10-18 14:59  Oxygen saturation in Arterial blood by Pulse oximetry: 100.000 %  \(LOINC 59408-5\)) Tj ET
+BT 53.86 471.09 Td (2026-10-18 14:30  Respiratory rate: 23.000 /min  \(LOINC 9279-1\)) Tj ET
+BT /F1 12.00 Tf ET
+BT 53.86 442.86 Td (Reportes de IA aprobados \(0\)) Tj ET
+BT /F2 10.00 Tf ET
+BT 53.86 424.32 Td (Sin reportes de IA aprobados.) Tj ET
+BT /F3 8.00 Tf ET
+BT 53.86 405.79 Td (Los reportes de IA son apoyo a la decision; solo se incluyen los que un medico o especialista reviso y aprobo.) Tj ET
+
+endstream
+endobj
+5 0 obj
+<<
+/BaseFont /Helvetica-Bold
+/Encoding /WinAnsiEncoding
+/Subtype /Type1
+/Type /Font
+>>
+endobj
+6 0 obj
+<<
+/BaseFont /Helvetica
+/Encoding /WinAnsiEncoding
+/Subtype /Type1
+/Type /Font
+>>
+endobj
+7 0 obj
+<<
+/BaseFont /Helvetica-Oblique
+/Encoding /WinAnsiEncoding
+/Subtype /Type1
+/Type /Font
+>>
+endobj
+8 0 obj
+<<
+/Font <</F1 5 0 R
+/F2 6 0 R
+/F3 7 0 R>>
+/ProcSet [/PDF /Text /ImageB /ImageC /ImageI]
+>>
+endobj
+9 0 obj
+<<
+/Author (SaludRed)
+/CreationDate (D:20261019024239Z)
+/Title (Historia clinica)
+>>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000096 00000 n 
+0000000199 00000 n 
+0000000279 00000 n 
+0000002158 00000 n 
+0000002260 00000 n 
+0000002357 00000 n 
+0000002462 00000 n 
+0000002569 00000 n 
+trailer
+<<
+/Size 10
+/Root 2 0 R
+/Info 9 0 R
+/ID [<B61B025A05D823090AA9C08A2A29CE5F><B61B025A05D823090AA9C08A2A29CE5F>]
+>>
+startxref
+2669
+%%EOF
