@@ -361,9 +361,11 @@ audit = expect_status(
     "GET audit-logs del paciente",
 ).json()
 actions = sorted(e["action"] for e in audit["items"])
+# The automatic FHIR sync adds FHIR_SYNC entries: require these four, allow others.
+required_actions = {"CREATE", "SOFT_EDIT", "SOFT_DELETE", "RESTORE"}
 check(
     "auditoria registra CREATE, SOFT_EDIT, SOFT_DELETE y RESTORE",
-    actions == ["CREATE", "RESTORE", "SOFT_DELETE", "SOFT_EDIT"],
+    required_actions.issubset(set(actions)),
     f"acciones: {actions}",
 )
 check(
