@@ -26,9 +26,9 @@ equipo:
 #   docker compose logs tunnel-fhir | grep trycloudflare
 # --------------------------------------------------------------------------
 url_publica:
-  web: https://<tunnel-web>.trycloudflare.com    # SPA y proxy de /api (nginx)
-  api: https://<tunnel-api>.trycloudflare.com    # API directa (Swagger en /docs)
-  fhir: https://<tunnel-fhir>.trycloudflare.com  # HAPI FHIR; el servidor vive bajo /fhir
+  web: https://essential-styles-protocol-inquire.trycloudflare.com   # SPA y proxy de /api (nginx)
+  api: https://findings-generic-julia-duck.trycloudflare.com         # API directa (Swagger en /docs)
+  fhir: https://backed-weblogs-lending-img.trycloudflare.com         # HAPI FHIR; el servidor vive bajo /fhir
   # Si el tester solo admite una URL base, usar url_publica.web: nginx reenvia
   # /api, /health y /docs hacia la API.
 
@@ -53,29 +53,29 @@ login:
 usuarios:
   admin:
     usuario: tester.admin
-    clave: "<contraseña de demo>"
+    clave: "Demo2026!"
     rol: admin
   medico:
     usuario: tester.medico
-    clave: "<contraseña de demo>"
+    clave: "Demo2026!"
     rol: medico
   especialista:
     usuario: tester.especialista
-    clave: "<contraseña de demo>"
+    clave: "Demo2026!"
     rol: especialista
   paciente:
     usuario: tester.paciente         # paciente propio "Tester Paciente", CC 9900009901
-    clave: "<contraseña de demo>"
+    clave: "Demo2026!"
     rol: paciente
   contable:
     usuario: tester.contable
-    clave: "<contraseña de demo>"
+    clave: "Demo2026!"
     rol: contable
   # Cuenta desechable para R02 (bloqueo tras 3 intentos fallidos). El admin la
   # desbloquea al terminar.
   bloqueo:
     usuario: tester.bloqueo
-    clave: "<contraseña de demo>"
+    clave: "Demo2026!"
     rol: medico
 
 # --------------------------------------------------------------------------

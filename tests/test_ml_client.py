@@ -64,3 +64,11 @@ def test_the_pseudonym_key_is_required_and_long_enough(monkeypatch) -> None:
     with pytest.raises(ValidationError):
         Settings(_env_file=None, **base)
     assert Settings(_env_file=None, pseudonym_key="k" * 16, **base).ml_service_url == "http://ml:8001"
+
+
+def test_embed_posts_the_texts_with_the_long_timeout(monkeypatch) -> None:
+    calls: list = []
+    _reply(monkeypatch, 200, {"model": "m", "dim": 2, "vectors": [[1.0, 0.0]]}, record=calls)
+    client = HttpMlClient("http://ml:8001", timeout=3.0, cleaning_timeout=1.0, embed_timeout=30.0)
+    assert client.embed(["hola"])["vectors"] == [[1.0, 0.0]]
+    assert calls == [("POST", "http://ml:8001/embed", {"texts": ["hola"]}, 30.0)]

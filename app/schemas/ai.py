@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.models.enums import AiReportKind, AiReportOrigin, AiReportStatus
 from app.schemas.observation import ObservationRead
 from app.schemas.patient import PatientRead
+from app.schemas.rag import ClinicalRecordSuggestion
 
 
 class AiAnalysisCreate(BaseModel):
@@ -123,4 +124,8 @@ class ClinicalRecordRead(BaseModel):
     paciente: PatientRead
     observaciones: list[ObservationRead]
     reportes_ia: list[ClinicalRecordReport]
+    sugerencias_rag: list[ClinicalRecordSuggestion] = Field(
+        default_factory=list,
+        description="RAG assistant answers that a clinician approved",
+    )
     generado_en: datetime

@@ -1,3 +1,6 @@
+# CPU-only torch wheels: the service has no GPU and the default wheel pulls
+# several GB of CUDA libraries.
+--extra-index-url https://download.pytorch.org/whl/cpu
 fastapi==0.115.6
 uvicorn==0.34.0
 pydantic==2.10.4
@@ -7,3 +10,7 @@ scipy==1.14.1
 joblib==1.4.2
 lightgbm==4.5.0
 xgboost-cpu==2.1.3
+# Embeddings for the clinical RAG (/embed).
+torch==2.5.1
+transformers==4.46.3
+sentence-transformers==3.3.1

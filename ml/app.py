@@ -12,13 +12,14 @@ import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import joblib
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from embeddings import DIMENSION, Embedder
 from features import CRITICALITY_RANGES, shift_of
 
 DEFAULT_ARTIFACTS = Path(os.environ.get("ARTIFACT_DIR", Path(__file__).resolve().parent / "artifacts"))
@@ -80,6 +81,22 @@ class CleaningRequest(Strict):
     service_occupancy: float | None = Field(default=None, ge=0, le=1)
     curtains_change_required: bool | None = None
     patient_waiting: bool | None = None
+
+
+MAX_EMBED_TEXTS = 64
+MAX_EMBED_CHARS = 4000
+
+
+class EmbedRequest(Strict):
+    texts: list[Annotated[str, Field(min_length=1, max_length=MAX_EMBED_CHARS)]] = Field(
+        min_length=1, max_length=MAX_EMBED_TEXTS
+    )
+
+
+class EmbedResponse(BaseModel):
+    model: str
+    dim: int
+    vectors: list[list[float]]
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +299,8 @@ def create_app(artifact_dir: Path = DEFAULT_ARTIFACTS) -> FastAPI:
         app.state.cleaning = Bundle(joblib.load(artifact_dir / "cleaning_delay.joblib"))
         app.state.minutes = MinutesBundle(joblib.load(artifact_dir / "cleaning_minutes.joblib"))
         app.state.metrics = json.loads((artifact_dir / "metrics.json").read_text("utf-8"))
+        # Lazy: the embedding model is only loaded by the first /embed request.
+        app.state.embedder = Embedder()
         yield
 
     app = FastAPI(
@@ -319,6 +338,15 @@ def create_app(artifact_dir: Path = DEFAULT_ARTIFACTS) -> FastAPI:
     @app.post("/predict/cleaning-minutes", response_model=MinutesPrediction)
     def predict_cleaning_minutes(body: CleaningRequest, request: Request) -> MinutesPrediction:
         return request.app.state.minutes.predict(_cleaning_record(body))
+
+    @app.post("/embed", response_model=EmbedResponse)
+    def embed(body: EmbedRequest, request: Request) -> EmbedResponse:
+        """Embeddings for the clinical RAG. Receives text only: no identifiers."""
+
+        embedder: Embedder = request.app.state.embedder
+        return EmbedResponse(
+            model=embedder.model_name, dim=DIMENSION, vectors=embedder.encode(body.texts)
+        )
 
     return app
 

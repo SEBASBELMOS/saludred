@@ -1,0 +1,89 @@
+- id: qg01
+  question: "¿Qué diferencia hay entre referencia y contrarreferencia en la red de prestadores?"
+  expected_doc: G01
+  expected_paragraph: 8
+  reference_answer: "La referencia es el envío de pacientes o de ayudas diagnósticas de un prestador a otro para atención o complementación diagnóstica según el nivel de resolución. La contrarreferencia es la respuesta que el prestador receptor da al prestador que remitió."
+
+- id: qg02
+  question: "¿En cuánto tiempo máximo debe la EPS definir el prestador receptor cuando un paciente de urgencias es referido?"
+  expected_doc: G05
+  expected_paragraph: 11
+  reference_answer: "Para la referencia en urgencias, la entidad responsable de pago debe dar respuesta definiendo el prestador receptor en un máximo de dos (2) horas."
+
+- id: qg03
+  question: "¿Quién responde por el paciente mientras se traslada de una IPS a otra?"
+  expected_doc: G03
+  expected_paragraph: 9
+  reference_answer: "La responsabilidad del manejo y cuidado del paciente es del prestador remisor hasta que ingrese en la institución receptora."
+
+- id: qg04
+  question: "¿Qué es el CRUE y qué función cumple?"
+  expected_doc: G06
+  expected_paragraph: 3
+  reference_answer: "El Centro Regulador de Urgencias, Emergencias y Desastres (CRUE) es una unidad de carácter operativo no asistencial. Coordina y regula en su jurisdicción el acceso a los servicios de urgencias y la atención de la población afectada por emergencias o desastres."
+
+- id: qg05
+  question: "¿Qué exige la Ley Estatutaria de Salud en cuanto a la oportunidad de los servicios?"
+  expected_doc: G09
+  expected_paragraph: 7
+  reference_answer: "La Ley Estatutaria define la oportunidad como que la prestación de los servicios y tecnologías de salud debe proveerse sin dilaciones."
+
+- id: qg06
+  question: "Según la norma de habilitación, ¿cuántas camas puede tener como máximo una habitación múltiple de adultos y qué área libre por cama necesita?"
+  expected_doc: G07
+  expected_paragraph: 2
+  reference_answer: "La habitación múltiple para pacientes adultos puede tener una capacidad máxima de 4 camas, con un área libre mínima de 7 m2 por cama y separación con barrera física fija o móvil."
+
+- id: qg07
+  question: "¿En qué casos se permite tratar datos sensibles de un paciente según la Ley 1581?"
+  expected_doc: G12
+  expected_paragraph: 9
+  reference_answer: "El tratamiento de datos sensibles está prohibido salvo excepciones, entre ellas que el titular dé su autorización explícita, o que sea necesario para salvaguardar su interés vital cuando esté física o jurídicamente incapacitado, caso en que autorizan sus representantes legales."
+
+- id: qg08
+  question: "¿Quién es el titular de la historia clínica electrónica y quién más puede acceder a ella?"
+  expected_doc: G18
+  expected_paragraph: 2
+  reference_answer: "Cada persona es titular de su historia clínica electrónica. Además del titular, tienen acceso los sujetos obligados señalados en el artículo 3 de la ley, con el previo y expreso consentimiento de la persona o paciente."
+
+- id: qg09
+  question: "¿Qué mide la tasa de rotación de camas (giro cama)?"
+  expected_doc: G27
+  expected_paragraph: 11
+  reference_answer: "La tasa de rotación de camas mide la productividad de las camas hospitalarias. Representa el número de pacientes tratados por cama en un periodo definido, usualmente un año."
+
+- id: qg10
+  question: "En un servicio quirúrgico, ¿qué parte de la estancia hospitalaria puede deberse a retrasos del alta ajenos a la actividad quirúrgica?"
+  expected_doc: G28
+  expected_paragraph: 6
+  reference_answer: "En el estudio, casi el 20% de la estancia total de la unidad no estuvo relacionada con la actividad quirúrgica, y los retrasos causados por el propio equipo quirúrgico fueron solo el 2% del total de retrasos."
+
+- id: qg11
+  question: "¿Cuál es la diferencia entre limpieza y desinfección de superficies en una institución de salud?"
+  expected_doc: G24
+  expected_paragraph: 6
+  reference_answer: "La limpieza es la actividad inicial que remueve mecánicamente la suciedad con agua y detergente. La desinfección elimina los microorganismos de la superficie con productos químicos y se realiza después de la limpieza."
+
+- id: qg12
+  question: "¿Qué significa la garantía humana (human warranty) en el uso de inteligencia artificial en salud?"
+  expected_doc: G26
+  expected_paragraph: 1
+  reference_answer: "La garantía humana implica la evaluación por parte de pacientes y clínicos durante el desarrollo y el despliegue de la IA. Se aplican principios regulatorios antes y después del algoritmo, con puntos de supervisión humana definidos entre profesionales, pacientes y diseñadores."
+
+- id: qg13
+  question: "¿Cambia la regulación según los datos de salud estén seudonimizados o anonimizados?"
+  expected_doc: G32
+  expected_paragraph: 4
+  reference_answer: "Sí. Cuando los datos son seudonimizados, los requisitos del RGPD (GDPR) siguen aplicándose, mientras que los datos anónimos, que no son datos personales, no están regulados por el RGPD."
+
+- id: qg14
+  question: "¿Cuál es la mejor rutina de entrenamiento para correr una maratón en menos de cuatro horas?"
+  expected_doc: null
+  expected_paragraph: null
+  reference_answer: "ABSTAIN"
+
+- id: qg15
+  question: "¿Cómo se prepara un ajiaco santafereño tradicional?"
+  expected_doc: null
+  expected_paragraph: null
+  reference_answer: "ABSTAIN"

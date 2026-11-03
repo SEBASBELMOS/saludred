@@ -29,12 +29,23 @@ class MlClient(Protocol):
 
     def models(self) -> dict[str, Any]: ...
 
+    def embed(self, texts: list[str]) -> dict[str, Any]:
+        """``{"model", "dim", "vectors"}``: one normalized vector per text."""
+        ...
+
 
 class HttpMlClient:
-    def __init__(self, base_url: str, timeout: float, cleaning_timeout: float) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float,
+        cleaning_timeout: float,
+        embed_timeout: float = 30.0,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._cleaning_timeout = cleaning_timeout
+        self._embed_timeout = embed_timeout
 
     def _call(
         self, method: str, path: str, *, json: dict[str, Any] | None = None, timeout: float
@@ -68,6 +79,9 @@ class HttpMlClient:
     def models(self) -> dict[str, Any]:
         return self._call("GET", "/models", timeout=self._timeout)
 
+    def embed(self, texts: list[str]) -> dict[str, Any]:
+        return self._call("POST", "/embed", json={"texts": texts}, timeout=self._embed_timeout)
+
 
 _client: MlClient | None = None
 
@@ -80,6 +94,7 @@ def get_client() -> MlClient:
             settings.ml_service_url,
             settings.ml_timeout_seconds,
             settings.ml_cleaning_timeout_seconds,
+            settings.ml_embed_timeout_seconds,
         )
     return _client
 

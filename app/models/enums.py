@@ -199,6 +199,9 @@ class AuditAction(str, Enum):
     CLINICAL_RECORD_EXPORTED = "CLINICAL_RECORD_EXPORTED"
     FHIR_IMPORT = "FHIR_IMPORT"
     RESPONSIBLE_CHANGED = "RESPONSIBLE_CHANGED"
+    RAG_QUERY = "RAG_QUERY"
+    RAG_SUGGESTION_APPROVED = "RAG_SUGGESTION_APPROVED"
+    RAG_SUGGESTION_REJECTED = "RAG_SUGGESTION_REJECTED"
 
 
 class CleaningIsolation(str, Enum):
@@ -248,6 +251,42 @@ class AiReportStatus(str, Enum):
     PENDING = "pendiente"
     APPROVED = "aprobado"
     REJECTED = "rechazado"
+
+
+class RagBase(str, Enum):
+    """Knowledge base a RAG chunk belongs to.
+
+    ``general`` and ``triage`` are curated public guidelines, always searchable.
+    ``historia`` holds clinician-approved suggestions of ONE patient and is only
+    searchable with that patient's pseudonym.
+    """
+
+    GENERAL = "general"
+    TRIAGE = "triage"
+    HISTORY = "historia"
+
+
+class RagSuggestionStatus(str, Enum):
+    """Clinical sign-off state of a RAG suggestion; same contract values as AI reports."""
+
+    PENDING = "pendiente"
+    APPROVED = "aprobado"
+    REJECTED = "rechazado"
+
+
+class RagAnswerMode(str, Enum):
+    """How a RAG answer was produced.
+
+    ``llm``: the external model answered from the pseudonymized context.
+    ``extractivo``: no model answer; the best passages are quoted.
+    ``lexico``: like ``extractivo`` but retrieval was lexical-only (embeddings down).
+    ``abstencion``: the evidence was insufficient and nothing was generated.
+    """
+
+    LLM = "llm"
+    EXTRACTIVE = "extractivo"
+    LEXICAL = "lexico"
+    ABSTENTION = "abstencion"
 
 
 class ReferralStatus(str, Enum):
