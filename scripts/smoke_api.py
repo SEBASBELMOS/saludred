@@ -364,8 +364,13 @@ audit = expect_status(
 
 
 actions = sorted(e["action"] for e in audit["items"])
+<<<<<<< HEAD
 required_actions = {"CREATE", "SOFT_EDIT", "SOFT_DELETE", "RESTORE"}
 
+=======
+# The automatic FHIR sync adds FHIR_SYNC entries: require these four, allow others.
+required_actions = {"CREATE", "SOFT_EDIT", "SOFT_DELETE", "RESTORE"}
+>>>>>>> origin/main
 check(
     "auditoria registra CREATE, SOFT_EDIT, SOFT_DELETE y RESTORE",
     required_actions.issubset(set(actions)),

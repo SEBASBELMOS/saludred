@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.ai import AiReport
+from app.models.rag import RagSuggestion
 from app.models.clinical import Encounter, Observation
 from app.models.enums import AuditAction, RoleCode
 from app.models.identity import User
@@ -23,7 +24,8 @@ from app.models.patient import Patient
 from app.schemas.ai import ClinicalRecordRead, ClinicalRecordReport
 from app.schemas.observation import ObservationRead
 from app.schemas.patient import PatientRead
-from app.services import ai_reports, patient_access, trail
+from app.schemas.rag import ClinicalRecordSuggestion, RagSource
+from app.services import ai_reports, patient_access, rag_suggestions, trail
 
 MAX_OBSERVATIONS = 500
 
@@ -59,6 +61,21 @@ def _report_item(report: AiReport) -> ClinicalRecordReport:
     )
 
 
+def _suggestion_item(suggestion: RagSuggestion) -> ClinicalRecordSuggestion:
+    return ClinicalRecordSuggestion(
+        id=suggestion.id,
+        question=suggestion.question,
+        answer=suggestion.answer,
+        sources=[RagSource(**source) for source in suggestion.sources],
+        model=suggestion.model,
+        estado=suggestion.status,
+        observaciones=suggestion.notes,
+        firmado_por=suggestion.reviewer.full_name if suggestion.reviewer is not None else None,
+        reviewed_at=suggestion.reviewed_at,
+        created_at=suggestion.created_at,
+    )
+
+
 def build_record(db: Session, patient: Patient, user: User) -> ClinicalRecordRead:
     return ClinicalRecordRead(
         paciente=PatientRead.model_validate(patient),
@@ -66,6 +83,9 @@ def build_record(db: Session, patient: Patient, user: User) -> ClinicalRecordRea
             ObservationRead.model_validate(o) for o in _observations(db, patient.id, user)
         ],
         reportes_ia=[_report_item(r) for r in ai_reports.approved_reports(db, patient.id)],
+        sugerencias_rag=[
+            _suggestion_item(s) for s in rag_suggestions.approved_suggestions(db, patient.id)
+        ],
         generado_en=datetime.now(timezone.utc),
     )
 
@@ -81,6 +101,7 @@ def audit_view(db: Session, patient: Patient, record: ClinicalRecordRead, user: 
             "patient_id": str(patient.id),
             "format": "json",
             "approved_report_ids": [str(r.id) for r in record.reportes_ia],
+            "approved_suggestion_ids": [str(s.id) for s in record.sugerencias_rag],
         },
     )
     db.commit()
@@ -164,14 +185,31 @@ def render_pdf(record: ClinicalRecordRead) -> bytes:
             line(f"Concepto clinico: {item.observaciones}")
         pdf.ln(2)
 
+    heading(f"Consultas al asistente aprobadas ({len(record.sugerencias_rag)})")
+    if not record.sugerencias_rag:
+        line("Sin consultas al asistente aprobadas.")
+    for suggestion in record.sugerencias_rag:
+        pdf.set_font("Helvetica", "B", 10)
+        line(f"Consulta {suggestion.id}")
+        pdf.set_font("Helvetica", "", 10)
+        line(f"Pregunta: {suggestion.question}")
+        line(f"Respuesta: {suggestion.answer}")
+        cited = ", ".join(f"[{src.n}] {src.title}" for src in suggestion.sources)
+        if cited:
+            line(f"Fuentes: {cited}")
+        line(f"Firmado por: {suggestion.firmado_por or '-'}  el {_fmt(suggestion.reviewed_at)}")
+        if suggestion.observaciones:
+            line(f"Concepto clinico: {suggestion.observaciones}")
+        pdf.ln(2)
+
     pdf.ln(2)
     pdf.set_font("Helvetica", "I", 8)
     pdf.multi_cell(
         0,
         4,
         _latin(
-            "Los reportes de IA son apoyo a la decision; solo se incluyen los que un "
-            "medico o especialista reviso y aprobo."
+            "Los reportes y consultas de IA son apoyo a la decision; solo se incluyen los que "
+            "un medico o especialista reviso y aprobo."
         ),
         new_x="LMARGIN",
         new_y="NEXT",
@@ -191,6 +229,7 @@ def audit_export(db: Session, patient: Patient, record: ClinicalRecordRead, user
             "format": "pdf",
             "own_record": user.role.code == RoleCode.PATIENT,
             "approved_report_ids": [str(r.id) for r in record.reportes_ia],
+            "approved_suggestion_ids": [str(s.id) for s in record.sugerencias_rag],
         },
     )
     db.commit()

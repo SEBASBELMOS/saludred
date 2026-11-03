@@ -20,6 +20,11 @@ os.environ.setdefault("FHIR_HOOK_SECRET", "unit-test-hook-secret-not-real")
 # tests must behave the same there.
 # Tests never talk to HAPI: the tests of auto-sync enable it with a fake client.
 os.environ["FHIR_AUTO_SYNC"] = "false"
+# RAG tests assert the classic RRF math (weights 1/1) and k=3; production runs the
+# tuned values from rag/eval/SWEEP.md (dense weight 3, k=5).
+os.environ["RAG_RRF_DENSE_WEIGHT"] = "1.0"
+os.environ["RAG_RRF_LEXICAL_WEIGHT"] = "1.0"
+os.environ["RAG_DEFAULT_K"] = "3"
 # The escalation timer is started by the app lifespan; tests call its functions
 # directly with a frozen clock instead.
 os.environ["ALERT_ESCALATION_ENABLED"] = "false"
@@ -35,6 +40,8 @@ import pytest  # noqa: E402
 from app.billing import store  # noqa: E402
 from app.services import ml_client  # noqa: E402
 from app.services.errors import MlServiceUnavailableError  # noqa: E402
+from app.services.rag import llm as rag_llm  # noqa: E402
+from app.services.rag import store as rag_store  # noqa: E402
 
 
 class _DownMlClient:
@@ -47,7 +54,7 @@ class _DownMlClient:
     def _down(self, *_args: object, **_kwargs: object) -> dict:
         raise MlServiceUnavailableError("test: AI service down")
 
-    predict_criticality = predict_cleaning_delay = models = _down
+    predict_criticality = predict_cleaning_delay = models = embed = _down
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +62,19 @@ def _no_real_ml_service():  # noqa: ANN202
     ml_client.set_client(_DownMlClient())
     yield
     ml_client.set_client(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_llm_or_stale_rag_index():  # noqa: ANN202
+    """No test reaches Groq (even if a real key sits in .env) or reuses another test's index."""
+
+    rag_llm.set_client(None)
+    rag_llm.set_judge_client()
+    rag_store.invalidate_cache()
+    yield
+    rag_llm.set_client()
+    rag_llm.set_judge_client()
+    rag_store.invalidate_cache()
 
 
 @pytest.fixture(autouse=True)

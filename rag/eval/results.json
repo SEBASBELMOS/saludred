@@ -1,0 +1,1187 @@
+{
+  "run_at": "2026-10-29T16:39:23+00:00",
+  "chunking": "paragraph",
+  "ks": [
+    1,
+    3,
+    5
+  ],
+  "ranking_depth": 8,
+  "models": {
+    "embedding": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "llm": "qwen/qwen3.8-27b",
+    "judge": "openai/gpt-oss-20b"
+  },
+  "run": {
+    "sleep_seconds": 8.0,
+    "rrf_dense_weight": 3.0,
+    "rrf_lexical_weight": 1.0,
+    "judge_method": "hybrid",
+    "context_k": 5,
+    "rate_limit_hits": 0
+  },
+  "params": {
+    "bm25": {
+      "k1": 1.2,
+      "b": 0.75
+    },
+    "rrf_k": 60,
+    "mmr_lambda": 0.7,
+    "candidates": 8,
+    "judge_k": 5
+  },
+  "corpus": {
+    "documents": {
+      "general": 32,
+      "triage": 32
+    },
+    "chunks": {
+      "general": 518,
+      "triage": 531,
+      "historia": 0
+    },
+    "paragraph_chunking_not_one_to_one": [
+      "G01",
+      "G02",
+      "G03",
+      "G04",
+      "G05",
+      "G06",
+      "G10",
+      "G11",
+      "G12",
+      "G13",
+      "G14",
+      "G15",
+      "G16",
+      "G17",
+      "G20",
+      "G21",
+      "G22",
+      "G23",
+      "G24",
+      "G26",
+      "G27",
+      "G28",
+      "G29",
+      "G30",
+      "G31",
+      "G32",
+      "T04",
+      "T05",
+      "T07",
+      "T11",
+      "T12",
+      "T17",
+      "T18",
+      "T19",
+      "T21",
+      "T22",
+      "T25",
+      "T27",
+      "T30"
+    ]
+  },
+  "questions": {
+    "total": 30,
+    "answerable": 26,
+    "out_of_scope": 4
+  },
+  "retrieval": {
+    "tfidf": {
+      "overall": {
+        "n": 26,
+        "n_chunk_level": 26,
+        "recall_doc": {
+          "1": 0.23076923076923078,
+          "3": 0.4230769230769231,
+          "5": 0.46153846153846156
+        },
+        "recall_chunk": {
+          "1": 0.07692307692307693,
+          "3": 0.2692307692307692,
+          "5": 0.3076923076923077
+        },
+        "mrr_doc": 0.3465201465201465,
+        "mrr_chunk": 0.2000915750915751
+      },
+      "general": {
+        "n": 13,
+        "n_chunk_level": 13,
+        "recall_doc": {
+          "1": 0.38461538461538464,
+          "3": 0.6153846153846154,
+          "5": 0.6923076923076923
+        },
+        "recall_chunk": {
+          "1": 0.15384615384615385,
+          "3": 0.38461538461538464,
+          "5": 0.46153846153846156
+        },
+        "mrr_doc": 0.5007326007326007,
+        "mrr_chunk": 0.2738095238095238
+      },
+      "triage": {
+        "n": 13,
+        "n_chunk_level": 13,
+        "recall_doc": {
+          "1": 0.07692307692307693,
+          "3": 0.23076923076923078,
+          "5": 0.23076923076923078
+        },
+        "recall_chunk": {
+          "1": 0.0,
+          "3": 0.15384615384615385,
+          "5": 0.15384615384615385
+        },
+        "mrr_doc": 0.19230769230769232,
+        "mrr_chunk": 0.12637362637362637
+      }
+    },
+    "bm25": {
+      "overall": {
+        "n": 26,
+        "n_chunk_level": 26,
+        "recall_doc": {
+          "1": 0.3076923076923077,
+          "3": 0.46153846153846156,
+          "5": 0.5769230769230769
+        },
+        "recall_chunk": {
+          "1": 0.15384615384615385,
+          "3": 0.3076923076923077,
+          "5": 0.38461538461538464
+        },
+        "mrr_doc": 0.41611721611721614,
+        "mrr_chunk": 0.2580586080586081
+      },
+      "general": {
+        "n": 13,
+        "n_chunk_level": 13,
+        "recall_doc": {
+          "1": 0.38461538461538464,
+          "3": 0.6153846153846154,
+          "5": 0.7692307692307693
+        },
+        "recall_chunk": {
+          "1": 0.15384615384615385,
+          "3": 0.38461538461538464,
+          "5": 0.46153846153846156
+        },
+        "mrr_doc": 0.5256410256410257,
+        "mrr_chunk": 0.2846153846153846
+      },
+      "triage": {
+        "n": 13,
+        "n_chunk_level": 13,
+        "recall_doc": {
+          "1": 0.23076923076923078,
+          "3": 0.3076923076923077,
+          "5": 0.38461538461538464
+        },
+        "recall_chunk": {
+          "1": 0.15384615384615385,
+          "3": 0.23076923076923078,
+          "5": 0.3076923076923077
+        },
+        "mrr_doc": 0.3065934065934066,
+        "mrr_chunk": 0.2315018315018315
+      }
+    },
+    "dense": {
+      "overall": {
+        "n": 26,
+        "n_chunk_level": 26,
+        "recall_doc": {
+          "1": 0.6153846153846154,
+          "3": 0.8461538461538461,
+          "5": 0.9615384615384616
+        },
+        "recall_chunk": {
+          "1": 0.34615384615384615,
+          "3": 0.5384615384615384,
+          "5": 0.6538461538461539
+        },
+        "mrr_doc": 0.7413461538461538,
+        "mrr_chunk": 0.458974358974359
+      },
+      "general": {
+        "n": 13,
+        "n_chunk_level": 13,
+        "recall_doc": {
+          "1": 0.6153846153846154,
+          "3": 0.8461538461538461,
+          "5": 1.0
+        },
+        "recall_chunk": {
+          "1": 0.15384615384615385,
+          "3": 0.3076923076923077,
+          "5": 0.5384615384615384
+        },
+        "mrr_doc": 0.7487179487179486,
+        "mrr_chunk": 0.2897435897435897
+      },
+      "triage": {
+        "n": 13,
+        "n_chunk_level": 13,
+        "recall_doc": {
+          "1": 0.6153846153846154,
+          "3": 0.8461538461538461,
+          "5": 0.9230769230769231
+        },
+        "recall_chunk": {
+          "1": 0.5384615384615384,
+          "3": 0.7692307692307693,
+          "5": 0.7692307692307693
+        },
+        "mrr_doc": 0.7339743589743589,
+        "mrr_chunk": 0.6282051282051282
+      }
+    },
+    "hybrid": {
+      "overall": {
+        "n": 26,
+        "n_chunk_level": 26,
+        "recall_doc": {
+          "1": 0.5384615384615384,
+          "3": 0.8461538461538461,
+          "5": 0.9230769230769231
+        },
+        "recall_chunk": {
+          "1": 0.3076923076923077,
+          "3": 0.5384615384615384,
+          "5": 0.7307692307692307
+        },
+        "mrr_doc": 0.7,
+        "mrr_chunk": 0.44999999999999996
+      },
+      "general": {
+        "n": 13,
+        "n_chunk_level": 13,
+        "recall_doc": {
+          "1": 0.46153846153846156,
+          "3": 0.7692307692307693,
+          "5": 0.9230769230769231
+        },
+        "recall_chunk": {
+          "1": 0.15384615384615385,
+          "3": 0.46153846153846156,
+          "5": 0.5384615384615384
+        },
+        "mrr_doc": 0.633974358974359,
+        "mrr_chunk": 0.29743589743589743
+      },
+      "triage": {
+        "n": 13,
+        "n_chunk_level": 13,
+        "recall_doc": {
+          "1": 0.6153846153846154,
+          "3": 0.9230769230769231,
+          "5": 0.9230769230769231
+        },
+        "recall_chunk": {
+          "1": 0.46153846153846156,
+          "3": 0.6153846153846154,
+          "5": 0.9230769230769231
+        },
+        "mrr_doc": 0.7660256410256411,
+        "mrr_chunk": 0.6025641025641025
+      }
+    },
+    "hybrid_mmr": {
+      "overall": {
+        "n": 26,
+        "n_chunk_level": 26,
+        "recall_doc": {
+          "1": 0.6153846153846154,
+          "3": 0.9230769230769231,
+          "5": 0.9615384615384616
+        },
+        "recall_chunk": {
+          "1": 0.34615384615384615,
+          "3": 0.5769230769230769,
+          "5": 0.6923076923076923
+        },
+        "mrr_doc": 0.7705128205128206,
+        "mrr_chunk": 0.46089743589743587
+      },
+      "general": {
+        "n": 13,
+        "n_chunk_level": 13,
+        "recall_doc": {
+          "1": 0.6153846153846154,
+          "3": 0.8461538461538461,
+          "5": 0.9230769230769231
+        },
+        "recall_chunk": {
+          "1": 0.15384615384615385,
+          "3": 0.3076923076923077,
+          "5": 0.46153846153846156
+        },
+        "mrr_doc": 0.7461538461538461,
+        "mrr_chunk": 0.25256410256410255
+      },
+      "triage": {
+        "n": 13,
+        "n_chunk_level": 13,
+        "recall_doc": {
+          "1": 0.6153846153846154,
+          "3": 1.0,
+          "5": 1.0
+        },
+        "recall_chunk": {
+          "1": 0.5384615384615384,
+          "3": 0.8461538461538461,
+          "5": 0.9230769230769231
+        },
+        "mrr_doc": 0.7948717948717949,
+        "mrr_chunk": 0.6692307692307692
+      }
+    }
+  },
+  "abstention": {
+    "thresholds": {
+      "min_cosine": 0.45,
+      "min_bm25": 1.5
+    },
+    "n_out_of_scope": 4,
+    "correct_abstentions": 4,
+    "accuracy": 1.0,
+    "n_answerable": 26,
+    "false_abstentions": 1,
+    "false_abstention_rate": 0.038461538461538464,
+    "details": [
+      {
+        "id": "qg01",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.5807,
+        "max_bm25": 21.2538,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qg02",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.658,
+        "max_bm25": 21.1833,
+        "bm25_top_in_dense_top": true
+      },
+      {
+        "id": "qg03",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7059,
+        "max_bm25": 12.8377,
+        "bm25_top_in_dense_top": true
+      },
+      {
+        "id": "qg04",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.5107,
+        "max_bm25": 6.6522,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qg05",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7996,
+        "max_bm25": 12.8417,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qg06",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7879,
+        "max_bm25": 52.8867,
+        "bm25_top_in_dense_top": true
+      },
+      {
+        "id": "qg07",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7382,
+        "max_bm25": 27.3888,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qg08",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7364,
+        "max_bm25": 23.4894,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qg09",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.6335,
+        "max_bm25": 13.1567,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qg10",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7138,
+        "max_bm25": 18.6875,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qg11",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7419,
+        "max_bm25": 20.6465,
+        "bm25_top_in_dense_top": true
+      },
+      {
+        "id": "qg12",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.8217,
+        "max_bm25": 13.9571,
+        "bm25_top_in_dense_top": true
+      },
+      {
+        "id": "qg13",
+        "dataset": "general",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7474,
+        "max_bm25": 10.0082,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qg14",
+        "dataset": "general",
+        "expected_abstain": true,
+        "abstained": true,
+        "max_cosine": 0.3793,
+        "max_bm25": 13.6007,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qg15",
+        "dataset": "general",
+        "expected_abstain": true,
+        "abstained": true,
+        "max_cosine": 0.3681,
+        "max_bm25": 0.0,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qt01",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7516,
+        "max_bm25": 20.3713,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qt02",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7515,
+        "max_bm25": 13.5221,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qt03",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7979,
+        "max_bm25": 15.4728,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qt04",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.8022,
+        "max_bm25": 12.229,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qt05",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7866,
+        "max_bm25": 14.1723,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qt06",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.7339,
+        "max_bm25": 19.011,
+        "bm25_top_in_dense_top": true
+      },
+      {
+        "id": "qt07",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.6288,
+        "max_bm25": 17.6425,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qt08",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.745,
+        "max_bm25": 8.5935,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qt09",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.6127,
+        "max_bm25": 11.8295,
+        "bm25_top_in_dense_top": true
+      },
+      {
+        "id": "qt10",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.5687,
+        "max_bm25": 6.4662,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qt11",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": true,
+        "max_cosine": 0.4133,
+        "max_bm25": 6.5296,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qt12",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.5866,
+        "max_bm25": 6.5942,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qt13",
+        "dataset": "triage",
+        "expected_abstain": false,
+        "abstained": false,
+        "max_cosine": 0.591,
+        "max_bm25": 33.143,
+        "bm25_top_in_dense_top": true
+      },
+      {
+        "id": "qt14",
+        "dataset": "triage",
+        "expected_abstain": true,
+        "abstained": true,
+        "max_cosine": 0.2318,
+        "max_bm25": 8.595,
+        "bm25_top_in_dense_top": false
+      },
+      {
+        "id": "qt15",
+        "dataset": "triage",
+        "expected_abstain": true,
+        "abstained": true,
+        "max_cosine": 0.2399,
+        "max_bm25": 7.7268,
+        "bm25_top_in_dense_top": false
+      }
+    ]
+  },
+  "judge": {
+    "model": "openai/gpt-oss-20b",
+    "k": 5,
+    "method": "hybrid",
+    "n_answerable": 26,
+    "overall": {
+      "n_questions": 26,
+      "n_judged": 21,
+      "n_degraded": 0,
+      "n_abstained": 5,
+      "faithfulness": 1.0,
+      "n_faithfulness": 21,
+      "answer_relevancy": 0.6989180784524321,
+      "n_answer_relevancy": 14,
+      "context_precision": 0.5456666666666667,
+      "n_context_precision": 25,
+      "context_recall": 0.74,
+      "n_context_recall": 25
+    },
+    "by_dataset": {
+      "general": {
+        "n_questions": 13,
+        "n_judged": 10,
+        "n_degraded": 0,
+        "n_abstained": 3,
+        "faithfulness": 1.0,
+        "n_faithfulness": 10,
+        "answer_relevancy": 0.6619498214211442,
+        "n_answer_relevancy": 6,
+        "context_precision": 0.4955128205128205,
+        "n_context_precision": 13,
+        "context_recall": 0.5769230769230769,
+        "n_context_recall": 13
+      },
+      "triage": {
+        "n_questions": 13,
+        "n_judged": 11,
+        "n_degraded": 0,
+        "n_abstained": 2,
+        "faithfulness": 1.0,
+        "n_faithfulness": 11,
+        "answer_relevancy": 0.726644271225898,
+        "n_answer_relevancy": 8,
+        "context_precision": 0.6,
+        "n_context_precision": 12,
+        "context_recall": 0.9166666666666666,
+        "n_context_recall": 12
+      }
+    },
+    "details": [
+      {
+        "id": "qg01",
+        "dataset": "general",
+        "answer": "La referencia es el envío de pacientes o elementos de ayuda diagnóstica por un prestador a otro para atención o complementación diagnóstica [3]. La contrarreferencia es la respuesta que el prestador receptor de la referencia da al prestador que remitió [3]. Este proceso de referencia y contrarreferencia está regulado en el artículo 17 del Decreto 4747 de 2007 [2]. Su diseño y operación es obligación de las entidades responsables del pago de servicios de salud [4].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "G03-10",
+          "G02-14",
+          "G01-9",
+          "G02-15",
+          "G05-22"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.47930656303964736,
+        "context_precision": 0.3333333333333333,
+        "context_recall": 1.0
+      },
+      {
+        "id": "qg02",
+        "dataset": "general",
+        "answer": "No hay evidencia suficiente en las fuentes del sistema.",
+        "mode": "abstencion",
+        "status": "abstained",
+        "degraded_reason": null,
+        "contexts": [
+          "G05-18",
+          "G05-6",
+          "G02-0",
+          "G03-9",
+          "T02-6"
+        ],
+        "faithfulness": null,
+        "answer_relevancy": null,
+        "context_precision": 1.0,
+        "context_recall": 0.0
+      },
+      {
+        "id": "qg03",
+        "dataset": "general",
+        "answer": "La entidad que prestó la atención de urgencia mantiene la responsabilidad sobre el paciente hasta que este ingresa a la entidad receptora [2]. Si no ha sido objeto de una remisión, su responsabilidad se extiende hasta el momento en que el paciente sea dado de alta [2].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "G01-10",
+          "G03-9",
+          "G05-25",
+          "G24-17",
+          "T02-6"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.674646776260272,
+        "context_precision": 0.5,
+        "context_recall": 1.0
+      },
+      {
+        "id": "qg04",
+        "dataset": "general",
+        "answer": "El CRUE es un Centro Regulador de Urgencias, Emergencias y Desastres [1]. Su función principal es contribuir, junto con los actores del Sistema General de Seguridad Social en Salud, en la atención adecuada y oportuna de pacientes que requieren atención de urgencia [1]. Para operar, debe cumplir con requisitos específicos, como contar con un Coordinador Profesional con experiencia en urgencias o emergencias [2]. Estos centros se rigen por condiciones y requisitos para su organización y operación [3].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "G06-22",
+          "G06-8",
+          "G06-4",
+          "G03-2",
+          "T02-5"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": null,
+        "context_precision": 1.0,
+        "context_recall": 0.0,
+        "errors": [
+          "answer_relevancy: judge failed: JSONDecodeError"
+        ]
+      },
+      {
+        "id": "qg05",
+        "dataset": "general",
+        "answer": "La Ley Estatutaria 1751 de 2015 establece que la prestación de los servicios y tecnologías de salud debe realizarse sin dilaciones [1]. Este principio de oportunidad garantiza que los pacientes reciban atención de manera continua y oportuna [1].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "G09-7",
+          "G02-11",
+          "G10-2",
+          "G01-2",
+          "G02-9"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": null,
+        "context_precision": 1.0,
+        "context_recall": 1.0,
+        "errors": [
+          "answer_relevancy: judge failed: JSONDecodeError"
+        ]
+      },
+      {
+        "id": "qg06",
+        "dataset": "general",
+        "answer": "Según la norma, la habitación múltiple para pacientes adultos debe tener una capacidad máxima de 4 camas [2]. Esta habitación requiere un área libre mínima de 7 m2 por cama [2]. Además, las camas deben estar separadas con una barrera física fija o móvil [2].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "G07-3",
+          "G07-2",
+          "G07-4",
+          "G07-1",
+          "G07-6"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": null,
+        "context_precision": 0.5,
+        "context_recall": 1.0,
+        "errors": [
+          "answer_relevancy: judge failed: JSONDecodeError"
+        ]
+      },
+      {
+        "id": "qg07",
+        "dataset": "general",
+        "answer": "El tratamiento de datos sensibles está prohibido, salvo que el titular haya dado su autorización explícita, excepto en los casos donde la ley no lo requiera [3]. También se permite cuando es necesario para salvaguardar el interés vital del titular y este se encuentra física o jurídicamente incapacitado [3]. En esta última situación, los representantes legales deberán otorgar la autorización correspondiente [3]. El Decreto 1377 de 2013 confirma que solo se permite el tratamiento en los casos expresamente señalados en el artículo 6 de la Ley 1581 de 2012 [5].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "G14-8",
+          "G20-1",
+          "G12-11",
+          "G20-20",
+          "G14-7"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": null,
+        "context_precision": 0.3333333333333333,
+        "context_recall": 1.0,
+        "errors": [
+          "answer_relevancy: judge failed: JSONDecodeError"
+        ]
+      },
+      {
+        "id": "qg08",
+        "dataset": "general",
+        "answer": "Cada persona es titular de los datos clínicos relevantes para la interoperabilidad de la historia clínica electrónica [4]. Además del titular, pueden acceder a ella las personas autorizadas por este y las demás previstas en la normatividad vigente [4]. Todo paciente tiene derecho a que le suministren su historia clínica de forma gratuita, completa y rápida [1]. La información debe mantenerse con los más altos niveles de confidencialidad [5].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "G18-6",
+          "G17-2",
+          "G17-10",
+          "G20-0",
+          "G18-4"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.5929565587125281,
+        "context_precision": 0.25,
+        "context_recall": 0.5
+      },
+      {
+        "id": "qg09",
+        "dataset": "general",
+        "answer": "No hay evidencia suficiente en las fuentes del sistema.",
+        "mode": "abstencion",
+        "status": "abstained",
+        "degraded_reason": null,
+        "contexts": [
+          "G07-5",
+          "G07-3",
+          "G07-2",
+          "G07-1",
+          "G27-3"
+        ],
+        "faithfulness": null,
+        "answer_relevancy": null,
+        "context_precision": 0.0,
+        "context_recall": 0.0
+      },
+      {
+        "id": "qg10",
+        "dataset": "general",
+        "answer": "Los pacientes quirúrgicos, especialmente los ancianos, pueden experimentar estancias prolongadas por razones evitables que no están directamente relacionadas con la actividad quirúrgica [4]. Un ejemplo ilustra que 266 días perdidos por retrasos no quirúrgicos evitables equivalen a la admisión y egreso de 38 pacientes adicionales en un período de cuatro meses [5]. Esto representa más de 100 pacientes adicionales al año, asumiendo una estancia promedio de 7 días para pacientes electivos [5].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "G07-0",
+          "T11-6",
+          "G08-3",
+          "G28-2",
+          "G28-8"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.7955920752860467,
+        "context_precision": 0.325,
+        "context_recall": 0.0
+      },
+      {
+        "id": "qg11",
+        "dataset": "general",
+        "answer": "La limpieza es la actividad inicial que implica la remoción mecánica de la suciedad mediante el uso de agua y detergente [5]. La desinfección es el proceso posterior que busca eliminar los microorganismos existentes en la superficie o equipos mediante productos químicos [5]. Por lo tanto, la limpieza debe realizarse siempre antes de la desinfección para asegurar la efectividad del proceso [5].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "G24-0",
+          "G24-18",
+          "G24-9",
+          "G24-16",
+          "G24-8"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.7529143602403471,
+        "context_precision": 0.2,
+        "context_recall": 1.0
+      },
+      {
+        "id": "qg12",
+        "dataset": "general",
+        "answer": "La \"garantía humana\" implica la evaluación por parte de pacientes y clínicos durante el desarrollo y despliegue de las tecnologías de IA [1]. Esto requiere la aplicación de principios regulatorios tanto aguas arriba como aguas abajo del algoritmo mediante el establecimiento de puntos de supervisión humana [2]. Los puntos críticos de supervisión se identifican a través de discusiones entre profesionales, pacientes y diseñadores [2]. Este mecanismo asegura la responsabilidad y la rendición de cuentas si algo sale mal con la tecnología de IA [1].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "G25-4",
+          "G26-1",
+          "G26-20",
+          "G26-18",
+          "G25-5"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.6762825949880243,
+        "context_precision": 1.0,
+        "context_recall": 1.0
+      },
+      {
+        "id": "qg13",
+        "dataset": "general",
+        "answer": "No hay evidencia suficiente en las fuentes del sistema.",
+        "mode": "abstencion",
+        "status": "abstained",
+        "degraded_reason": null,
+        "contexts": [
+          "G20-6",
+          "G12-2",
+          "G20-1",
+          "G06-15",
+          "G09-6"
+        ],
+        "faithfulness": null,
+        "answer_relevancy": null,
+        "context_precision": 0.0,
+        "context_recall": 0.0
+      },
+      {
+        "id": "qt01",
+        "dataset": "triage",
+        "answer": "Según la Resolución 5596 de 2015, la atención para un paciente clasificado como Triage II no debe superar los treinta minutos [2]. Esta categoría se define por la posibilidad de un rápido deterioro clínico o muerte, o el riesgo de pérdida de un miembro u órgano [2].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "T02-1",
+          "T01-6",
+          "T01-5",
+          "T21-6",
+          "T01-7"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": null,
+        "context_precision": 0.5,
+        "context_recall": 1.0,
+        "errors": [
+          "answer_relevancy: judge failed: JSONDecodeError"
+        ]
+      },
+      {
+        "id": "qt02",
+        "dataset": "triage",
+        "answer": "No, en ninguna circunstancia el \"Triage\" podrá ser empleado como un mecanismo para la negación de la atención de urgencias [4].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "T01-5",
+          "T01-7",
+          "T01-8",
+          "T01-4",
+          "T01-6"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.836449866139112,
+        "context_precision": 0.25,
+        "context_recall": 0.5
+      },
+      {
+        "id": "qt03",
+        "dataset": "triage",
+        "answer": "No hay evidencia suficiente en las fuentes del sistema.",
+        "mode": "abstencion",
+        "status": "abstained",
+        "degraded_reason": null,
+        "contexts": [
+          "T07-9",
+          "T07-0",
+          "T07-15",
+          "T04-5",
+          "T06-4"
+        ],
+        "faithfulness": null,
+        "answer_relevancy": null,
+        "context_precision": 0.0,
+        "context_recall": 0.5
+      },
+      {
+        "id": "qt04",
+        "dataset": "triage",
+        "answer": "No, un dolor de 8/10 no obliga a clasificar al paciente como nivel 2, ya que la enfermera de triaje puede asignar ese nivel pero no está obligada a hacerlo [1]. El manual aclara explícitamente que no todos los pacientes con dolor de 7/10 o mayor requieren una clasificación de nivel 2 [2]. Por ejemplo, un paciente con esguince de tobillo y dolor de 8/10 es un buen ejemplo de un paciente de nivel 4 [2]. La decisión final depende de la observación clínica y de si el dolor se asocia con otros signos de riesgo o angustia severa [1][3].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "T04-11",
+          "T04-12",
+          "T04-15",
+          "T04-14",
+          "T05-6"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.8155665974276944,
+        "context_precision": 0.9166666666666666,
+        "context_recall": 1.0
+      },
+      {
+        "id": "qt05",
+        "dataset": "triage",
+        "answer": "Los pacientes ESI nivel 3 se diferencian por la predicción de que requerirán dos o más recursos [1]. En cambio, los pacientes ESI nivel 4 se clasifican porque se predice que necesitarán un solo recurso [1]. Finalmente, los pacientes ESI nivel 5 son aquellos para quienes se predice que no consumirán ningún recurso [1]. Esta distinción basada en la predicción de recursos es integral para estos tres niveles [2]. La asignación de estos niveles se realiza tras determinar que el paciente no cumple criterios de mayor gravedad [5].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "T05-6",
+          "T06-0",
+          "T06-4",
+          "T06-9",
+          "T07-0"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.8221036570499506,
+        "context_precision": 0.7000000000000001,
+        "context_recall": 1.0
+      },
+      {
+        "id": "qt06",
+        "dataset": "triage",
+        "answer": "La variable *acuity* en la tabla de triage de MIMIC-IV-ED representa un orden de prioridad basado en la urgencia, utilizando el sistema de triaje de cinco niveles del Emergency Severity Index (ESI) [1]. Este nivel de urgencia es asignado por una enfermera registrada [1]. El nivel 1 es la prioridad más alta, mientras que el nivel 5 es la más baja [1]. La urgencia se determina por la estabilidad de las funciones vitales y la amenaza potencial para la vida, extremidades u órganos [5].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "T08-7",
+          "T08-0",
+          "T06-5",
+          "T21-6",
+          "T03-1"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.731483007841654,
+        "context_precision": 1.0,
+        "context_recall": 1.0
+      },
+      {
+        "id": "qt07",
+        "dataset": "triage",
+        "answer": "La temperatura en la tabla de triage de MIMIC-IV-ED se registra en grados Fahrenheit [4]. El problema principal es que algunas temperaturas pueden estar documentadas incorrectamente como grados Celsius [4].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "T08-7",
+          "T08-0",
+          "T10-3",
+          "T08-5",
+          "T08-3"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.9018083132408817,
+        "context_precision": 0.25,
+        "context_recall": 1.0
+      },
+      {
+        "id": "qt08",
+        "dataset": "triage",
+        "answer": "Los pacientes se clasifican en categorías de riesgo según su puntaje total de NEWS2 [1]. El riesgo bajo corresponde a un puntaje de 0 a 4 puntos [1]. El riesgo bajo a moderado se define como 3 puntos en cualquier parámetro individual [1]. El riesgo moderado abarca un puntaje de 5 a 6 puntos [1]. Finalmente, el riesgo alto se establece con un puntaje de 7 o más puntos [1].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "T22-10",
+          "T16-1",
+          "T16-8",
+          "T15-2",
+          "T22-15"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": null,
+        "context_precision": 1.0,
+        "context_recall": 1.0,
+        "errors": [
+          "answer_relevancy: judge failed: JSONDecodeError"
+        ]
+      },
+      {
+        "id": "qt09",
+        "dataset": "triage",
+        "answer": "La Escala de Coma de Glasgow evalúa la función neurológica de un paciente traumatizado mediante la respuesta ocular, verbal y motora [1]. El puntaje varía desde 3, que indica un estado no reactivo, hasta 15, que corresponde a una función normal [1]. Esta herramienta es el instrumento más adoptado para evaluar la conciencia en pacientes con trauma [5].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "T32-5",
+          "T19-1",
+          "T25-4",
+          "T18-4",
+          "T31-0"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": null,
+        "context_precision": 1.0,
+        "context_recall": 1.0,
+        "errors": [
+          "answer_relevancy: judge failed: JSONDecodeError"
+        ]
+      },
+      {
+        "id": "qt10",
+        "dataset": "triage",
+        "answer": "Si tu glucosa es inferior a 70 mg/dL o está por debajo de tu objetivo, debes consumir de inmediato 15 a 20 gramos de glucosa o carbohidratos [1]. Ejemplos incluyen cuatro tabletas de glucosa, media taza de jugo de fruta o una cucharada de azúcar [2]. Espera 15 minutos y vuelve a medir tu nivel de glucosa [2]. Si sigue baja, repite la ingesta de 15 a 20 gramos de carbohidratos y vuelve a medir después de otros 15 minutos [4]. Si tu próxima comida es en más de una hora, toma un snack para mantener la glucosa en rango [4].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "T28-5",
+          "T28-6",
+          "T28-8",
+          "T28-7",
+          "T28-1"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.5452099940229037,
+        "context_precision": 1.0,
+        "context_recall": 1.0
+      },
+      {
+        "id": "qt11",
+        "dataset": "triage",
+        "answer": "No hay evidencia suficiente en las fuentes del sistema.",
+        "mode": "abstencion",
+        "status": "abstained",
+        "degraded_reason": null,
+        "contexts": [],
+        "faithfulness": null,
+        "answer_relevancy": null,
+        "context_precision": null,
+        "context_recall": null
+      },
+      {
+        "id": "qt12",
+        "dataset": "triage",
+        "answer": "Sí, los síntomas que describes coinciden con los signos comunes de sepsis, una condición que puede derivar en shock séptico, falla múltiple de órganos y muerte [3]. La sepsis requiere atención médica inmediata, incluyendo el uso de antimicrobianos y fluidos intravenosos [3]. Además, la confusión es un indicador de que el cerebro podría estar comprometido estructural o químicamente [5]. En el contexto de la triaje, la fiebre en un paciente inmunocomprometido se considera una situación de alto riesgo [2]. La decisión final sobre la gravedad y el manejo corresponde al médico tratante.",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "T05-12",
+          "T04-7",
+          "T23-3",
+          "T26-0",
+          "T04-9"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.4736099571443852,
+        "context_precision": 0.3333333333333333,
+        "context_recall": 1.0
+      },
+      {
+        "id": "qt13",
+        "dataset": "triage",
+        "answer": "Según el estudio observacional descriptivo realizado en la subregión suroeste de Antioquia, solo el 13 % de las instituciones encuestadas cumplía de manera adecuada con los criterios técnicos [4]. Este hallazgo se obtuvo en el contexto de la implementación posterior a la Resolución 5596 de 2015 [2]. La norma establece que el triaje es de obligatorio cumplimiento para todas las clínicas y hospitales del territorio nacional [4].",
+        "mode": "llm",
+        "status": "judged",
+        "degraded_reason": null,
+        "contexts": [
+          "T02-0",
+          "T11-9",
+          "G06-0",
+          "T11-11",
+          "T01-0"
+        ],
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.686922776940603,
+        "context_precision": 0.25,
+        "context_recall": 1.0
+      }
+    ]
+  }
+}

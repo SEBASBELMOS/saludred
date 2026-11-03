@@ -49,6 +49,39 @@ class Settings(BaseSettings):
     ml_service_url: str = "http://ml:8001"
     ml_timeout_seconds: float = 8.0
     ml_cleaning_timeout_seconds: float = 2.0
+    # Embeddings are computed by the same service. The first call loads the
+    # model into memory, so it gets a much longer timeout than a prediction.
+    ml_embed_timeout_seconds: float = 30.0
+
+    # Clinical RAG (docs/RAG.md). The language model is optional: without a key
+    # the answer is extractive (the best passages, quoted). Never hardcode a key.
+    groq_api_key: str | None = None
+    groq_model: str = "qwen/qwen3.8-27b"
+    # Model that grades the evaluation. Unset: the generator model. Groq limits are
+    # per model, so a different one splits the quota (and avoids self-grading).
+    rag_judge_model: str | None = None
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_timeout_seconds: float = 30.0
+    # Caps the completion. qwen3 "thinks" before answering; without a cap a long
+    # reasoning can exhaust the time and the free-tier token budget.
+    groq_max_tokens: int = Field(default=600, ge=50, le=4000)
+    # Abstain only when BOTH signals are weak: best cosine below the first AND
+    # best BM25 score below the second (calibrated on the professor's notebook).
+    rag_min_cosine: float = 0.45
+    rag_min_bm25: float = 1.5
+    # Dense candidates below this cosine are not fused: a nearest neighbour that
+    # is not close is noise, and RRF would still rank it.
+    # Weighted RRF: fused = w_dense / (60 + rank_dense) + w_lexical / (60 + rank_bm25).
+    # 1.0 / 1.0 is plain RRF. BM25 is weak on a mixed es/en corpus, so the dense
+    # side can be given more weight (calibrate with ``rag_eval --sweep``).
+    rag_rrf_dense_weight: float = Field(default=3.0, ge=0.0, le=10.0)
+    rag_rrf_lexical_weight: float = Field(default=1.0, ge=0.0, le=10.0)
+    rag_dense_floor: float = Field(default=0.25, ge=0.0, le=1.0)
+    # MMR trade-off between relevance (1.0) and diversity (0.0).
+    rag_mmr_lambda: float = Field(default=0.7, ge=0.0, le=1.0)
+    # Hybrid candidates handed to MMR, and chunks finally cited in the prompt.
+    rag_candidates: int = Field(default=8, ge=1, le=50)
+    rag_default_k: int = Field(default=5, ge=1, le=10)
 
     # FHIR integration
     fhir_base_url: str = "http://localhost:8080/fhir"
@@ -139,6 +172,10 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @property
+    def has_llm_key(self) -> bool:
+        return bool((self.groq_api_key or "").strip())
 
     @property
     def is_production(self) -> bool:

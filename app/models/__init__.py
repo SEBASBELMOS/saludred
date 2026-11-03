@@ -18,6 +18,7 @@ from app.models.imaging import ImagingStudy
 from app.models.notification import Notification
 from app.models.organization import Location, Organization
 from app.models.patient import Patient
+from app.models.rag import RagChunk, RagSuggestion
 from app.models.referral import Referral
 
 __all__ = [
@@ -40,6 +41,8 @@ __all__ = [
     "Observation",
     "Organization",
     "Patient",
+    "RagChunk",
+    "RagSuggestion",
     "RecordVersion",
     "Referral",
     "Role",

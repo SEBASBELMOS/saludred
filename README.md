@@ -229,6 +229,7 @@ los demás flujos llegan en 2 a 5 s.
 | R20 Alertas críticas con reconocimiento | `app/services/alerts.py`, `app/services/alert_monitor.py`, `app/api/routes/alerts.py` | [`docs/EVENTOS.md`](docs/EVENTOS.md) |
 | R21 Interoperabilidad reactiva | `app/api/routes/fhir_hooks.py`, `app/services/fhir_inbound.py`, `scripts/ensure_fhir_subscription.py` | [`docs/EVENTOS.md`](docs/EVENTOS.md) |
 | R22 Documentación y sustentación | `docs/`, `tester.yaml` | [`docs/NORMATIVA.md`](docs/NORMATIVA.md), [`docs/IA.md`](docs/IA.md) |
+| Extra: asistente clínico con RAG | `app/services/rag/`, `app/services/rag_suggestions.py`, `app/api/routes/rag.py`, `scripts/rag_ingest.py`, `scripts/rag_eval.py` | [`docs/RAG.md`](docs/RAG.md) |
 
 El contrato de verificación automática está en [`tester.yaml`](tester.yaml).
 

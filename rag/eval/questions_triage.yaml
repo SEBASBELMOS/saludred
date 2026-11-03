@@ -1,0 +1,89 @@
+- id: qt01
+  question: "¿Cuál es el tiempo máximo de atención para un paciente clasificado como Triage II según la Resolución 5596 de 2015?"
+  expected_doc: T01
+  expected_paragraph: 6
+  reference_answer: "El Triage II corresponde a pacientes que pueden evolucionar hacia un rápido deterioro o a la muerte, o aumentar el riesgo de perder un miembro u órgano. Requieren una atención que no debe superar los treinta (30) minutos."
+
+- id: qt02
+  question: "¿Se puede usar el triage para negar la atención de urgencias a un paciente?"
+  expected_doc: T01
+  expected_paragraph: 4
+  reference_answer: "No. La resolución establece que en ninguna circunstancia el triage podrá ser empleado como un mecanismo para la negación de la atención de urgencias."
+
+- id: qt03
+  question: "¿Qué criterios hacen que un paciente sea ESI nivel 1 en el triage de urgencias?"
+  expected_doc: T03
+  expected_paragraph: 8
+  reference_answer: "Es nivel 1 el paciente que requiere de inmediato una intervención de vía aérea, medicación u otra intervención hemodinámica. También lo es el que ya está intubado, apneico, sin pulso, con dificultad respiratoria severa, con SpO2 menor de 90 por ciento, con cambios agudos del estado mental o sin respuesta."
+
+- id: qt04
+  question: "En el ESI, ¿un dolor 8 sobre 10 obliga a clasificar al paciente como nivel 2?"
+  expected_doc: T04
+  expected_paragraph: 11
+  reference_answer: "No obligatoriamente. Con un dolor autorreportado de 7 o más sobre 10 la enfermera de triage puede clasificar al paciente como ESI nivel 2, pero no está obligada a asignar ese nivel."
+
+- id: qt05
+  question: "¿Cómo se diferencian los niveles ESI 3, 4 y 5 según los recursos que necesita el paciente?"
+  expected_doc: T06
+  expected_paragraph: 9
+  reference_answer: "Los pacientes que se espera que no consuman recursos son nivel 5, los que probablemente requieran un recurso son nivel 4 y los que necesitan dos o más recursos son nivel 3."
+
+- id: qt06
+  question: "En la tabla de triage de MIMIC-IV-ED, ¿qué significa la variable acuity y qué nivel es el más urgente?"
+  expected_doc: T08
+  expected_paragraph: 7
+  reference_answer: "Acuity es un orden de prioridad basado en la agudeza según el Emergency Severity Index de cinco niveles, asignado por una enfermera registrada. El nivel 1 es la mayor prioridad y el nivel 5 la menor."
+
+- id: qt07
+  question: "¿En qué unidades está la temperatura en la tabla de triage de MIMIC-IV-ED y qué problema puede tener?"
+  expected_doc: T08
+  expected_paragraph: 5
+  reference_answer: "La temperatura está en grados Fahrenheit, y algunas temperaturas pueden estar documentadas por error como Celsius."
+
+- id: qt08
+  question: "¿Cómo se clasifica el riesgo según el puntaje total de NEWS2?"
+  expected_doc: T22
+  expected_paragraph: 10
+  reference_answer: "Riesgo bajo: 0 a 4 puntos. Riesgo bajo a medio: 3 puntos en un solo parámetro. Riesgo medio: 5 a 6 puntos. Riesgo alto: 7 puntos o más."
+
+- id: qt09
+  question: "¿Qué evalúa la escala de coma de Glasgow y entre qué valores varía el puntaje?"
+  expected_doc: T32
+  expected_paragraph: 5
+  reference_answer: "La escala de coma de Glasgow evalúa la función neurológica según la respuesta de movimiento ocular, verbal y motora. Su puntaje va de 3 (sin respuesta) a 15 (normal)."
+
+- id: qt10
+  question: "tengo el azúcar muy bajito y me tiemblan las manos, ¿qué hago?"
+  expected_doc: T28
+  expected_paragraph: 5
+  reference_answer: "Si la glucosa está por debajo de la meta o menos de 70 mg/dL, hay que comer o beber de inmediato 15 a 20 gramos de glucosa o carbohidratos. Después se sigue la regla 15-15: esperar 15 minutos y volver a medir."
+
+- id: qt11
+  question: "me duele mucho el pecho, estoy pálido y sudando frío, ¿es una urgencia máxima?"
+  expected_doc: T03
+  expected_paragraph: 15
+  reference_answer: "Sí. Según el ESI, el paciente con dolor torácico que está pálido, diaforético, con dificultad respiratoria aguda o hemodinámicamente inestable requiere intervenciones inmediatas que le salven la vida y cumple criterios de nivel 1."
+
+- id: qt12
+  question: "mi mamá tiene fiebre, el corazón le late muy rápido, respira agitada y está confundida, ¿puede ser grave?"
+  expected_doc: T23
+  expected_paragraph: 3
+  reference_answer: "Esos son signos comunes de sepsis: fiebre, frecuencia cardiaca rápida, respiración rápida, confusión y dolor corporal. La sepsis puede llevar a choque séptico, falla multiorgánica y muerte, y requiere atención médica."
+
+- id: qt13
+  question: "¿Qué porcentaje de hospitales del suroeste de Antioquia cumplía adecuadamente los criterios técnicos de la Resolución 5596?"
+  expected_doc: T11
+  expected_paragraph: 8
+  reference_answer: "Solo el 13 % de las instituciones encuestadas cumplía de manera adecuada los criterios técnicos propuestos por la resolución ministerial."
+
+- id: qt14
+  question: "¿Quién ganó el mundial de fútbol de 2014?"
+  expected_doc: null
+  expected_paragraph: null
+  reference_answer: "ABSTAIN"
+
+- id: qt15
+  question: "¿Cuál es la mejor receta para preparar bandeja paisa?"
+  expected_doc: null
+  expected_paragraph: null
+  reference_answer: "ABSTAIN"

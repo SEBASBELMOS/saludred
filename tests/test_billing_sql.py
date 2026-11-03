@@ -72,10 +72,10 @@ def test_reconciliation_scans_are_scoped_and_filtered() -> None:
 def test_the_latest_migration_covers_every_audit_action() -> None:
     """The head migration widens the CHECK to the full AuditAction vocabulary."""
 
-    path = next(Path("migrations/versions").glob("f6b3d8e1a742_*.py"))
-    spec = importlib.util.spec_from_file_location("migration_f6b3", path)
+    path = next(Path("migrations/versions").glob("c9e4a6b2d503_*.py"))
+    spec = importlib.util.spec_from_file_location("migration_c9e4", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert set(module.AUDIT_ACTIONS) == {a.value for a in AuditAction}
-    assert module.down_revision == "e5a9c2d4b681"
+    assert module.down_revision == "b8d3f5a1c492"
     assert len(module.AUDIT_ACTIONS) == len(set(module.AUDIT_ACTIONS))

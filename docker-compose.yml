@@ -19,7 +19,16 @@
 
 services:
   db:
-    image: postgres:16-alpine
+    # PostgreSQL 16 con la extension pgvector (busqueda por similitud del RAG
+    # clinico, docs/RAG.md). OJO con un volumen EXISTENTE: antes la imagen era
+    # alpine (musl) y esta es Debian (glibc); el orden de los textos (collation)
+    # cambia y los indices de texto existentes quedan inconsistentes. Tras cambiar
+    # la imagen, UNA vez:
+    #   docker compose exec db psql -U <usuario> -d <base> \
+    #     -c "REINDEX DATABASE <base>;" -c "ALTER DATABASE <base> REFRESH COLLATION VERSION;"
+    # (o volcar con pg_dump y restaurar en un volumen nuevo). Con un volumen nuevo
+    # no hay nada que hacer. La migracion ejecuta CREATE EXTENSION vector.
+    image: pgvector/pgvector:pg16
     container_name: saludred-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-saludred}
@@ -93,6 +102,21 @@ services:
       # Concepto clinico obligatorio al firmar. false por defecto: R10 dice que el
       # clinico "puede agregar observaciones". El front siempre lo pide.
       REQUIRE_REVIEW_NOTE: ${REQUIRE_REVIEW_NOTE:-false}
+      # RAG clinico (docs/RAG.md). Sin GROQ_API_KEY el asistente responde en modo
+      # extractivo (cita los fragmentos), no falla. La clave llega por el .env.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-qwen/qwen3.8-27b}
+      RAG_JUDGE_MODEL: ${RAG_JUDGE_MODEL:-}
+      GROQ_TIMEOUT_SECONDS: ${GROQ_TIMEOUT_SECONDS:-30}
+      GROQ_MAX_TOKENS: ${GROQ_MAX_TOKENS:-600}
+      RAG_MIN_COSINE: ${RAG_MIN_COSINE:-0.45}
+      RAG_RRF_DENSE_WEIGHT: ${RAG_RRF_DENSE_WEIGHT:-3.0}
+      RAG_RRF_LEXICAL_WEIGHT: ${RAG_RRF_LEXICAL_WEIGHT:-1.0}
+      RAG_DENSE_FLOOR: ${RAG_DENSE_FLOOR:-0.25}
+      RAG_MIN_BM25: ${RAG_MIN_BM25:-1.5}
+      RAG_MMR_LAMBDA: ${RAG_MMR_LAMBDA:-0.7}
+      RAG_CANDIDATES: ${RAG_CANDIDATES:-8}
+      RAG_DEFAULT_K: ${RAG_DEFAULT_K:-5}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # PSEUDONYM_KEY (clave HMAC de la seudonimizacion, R12) llega por el
       # .env, como JWT_SECRET_KEY: sin ella la API no arranca.

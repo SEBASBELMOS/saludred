@@ -35,6 +35,7 @@ from app.api.routes import (
     observations,
     organizations,
     patients,
+    rag,
     referrals,
 )
 from app.billing.store import init_billing
@@ -125,6 +126,7 @@ app.include_router(analytics.router)
 app.include_router(beds.router)
 app.include_router(cleaning.router)
 app.include_router(ai.router)
+app.include_router(rag.router)
 app.include_router(clinical_record.router)
 app.include_router(cohort.router)
 app.include_router(imaging.router)

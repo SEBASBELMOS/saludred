@@ -45,6 +45,19 @@ class MlServiceRejectedError(ServiceError):
     """The AI service refused the payload (4xx). Mapped to 502: it is a bug here."""
 
 
+class LlmUnavailableError(ServiceError):
+    """The external language model is not configured, down or failing.
+
+    The RAG answer never fails because of it: the caller falls back to an
+    extractive answer. ``reason`` says why, without any patient data:
+    ``rate_limited``, ``timeout`` or ``unavailable``.
+    """
+
+    def __init__(self, message: str = "", reason: str = "unavailable") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
 class BillingUnavailableError(ServiceError):
     """MongoDB (billing) is not configured, down or failing. Mapped to 503.
 
