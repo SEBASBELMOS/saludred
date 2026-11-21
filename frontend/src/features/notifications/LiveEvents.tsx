@@ -81,7 +81,8 @@ export function applyLiveEvent(client: QueryClient, event: AppNotification) {
     invalidate(ALERTS_KEY);
     invalidate(PENDING_KEY);
   }
-  if (event.tipo.startsWith("remision_")) {
+  // respuesta_socio: the partner answered a referral this doctor sent (R30).
+  if (event.tipo.startsWith("remision_") || event.tipo === "respuesta_socio") {
     invalidate(REFERRALS_KEY);
     invalidate(PENDING_KEY);
   }

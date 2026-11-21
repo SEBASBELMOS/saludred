@@ -23,6 +23,35 @@ class RecordVersionRead(BaseModel):
     changed_at: datetime
 
 
+class AuditChainReport(BaseModel):
+    """Result of ``GET /audit-logs/verify``: does the hash chain hold?"""
+
+    ok: bool
+    filas_verificadas: int
+    # First row that fails (``None`` when the chain holds) and why:
+    # ``contenido_alterado``, ``enlace_roto`` or ``fila_faltante``.
+    primera_fila_rota_id: uuid.UUID | None
+    primera_fila_rota_seq: int | None
+    motivo: str | None
+    ultimo_seq: int | None
+    ultimo_hash: str | None
+    inicio_cadena: datetime | None
+    # Rows written after the chain started that carry no hash (suspicious).
+    filas_sin_cadena_posteriores: int
+    verificado_en: datetime
+    nota: str
+
+
+class AuditChainHead(BaseModel):
+    """Last link of the chain: publish it outside the database every day."""
+
+    seq: int
+    ultimo_hash: str
+    fecha: datetime
+    consultado_en: datetime
+    nota: str
+
+
 class AuditLogRead(BaseModel):
     """One audit entry. ``username`` is resolved for readability in demos."""
 

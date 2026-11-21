@@ -20,10 +20,12 @@ channel, invoice, counters). See ``docs/EVENTOS.md``.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import Select, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.events.bus import DomainEvent, publish
@@ -173,7 +175,11 @@ def to_read(referral: Referral) -> ReferralRead:
         motivo=referral.motivo,
         estado=referral.status,
         remitente_id=referral.referring_user_id,
-        remitente_nombre=referral.referring_user.full_name,
+        remitente_nombre=(
+            referral.referring_user.full_name
+            if referral.referring_user is not None
+            else f"Sistema externo: {referral.origen_externo or 'desconocido'}"
+        ),
         especialista_id=referral.specialist_user_id,
         especialista_nombre=specialist.full_name,
         especialista_organizacion=organization.name if organization is not None else None,
@@ -195,7 +201,9 @@ def _audit_meta(referral: Referral, **extra: object) -> dict[str, Any]:
     return {
         "referral_id": str(referral.id),
         "patient_id": str(referral.patient_id),
-        "referring_user_id": str(referral.referring_user_id),
+        "referring_user_id": (
+            str(referral.referring_user_id) if referral.referring_user_id else None
+        ),
         "specialist_user_id": str(referral.specialist_user_id),
         "estado": referral.status.value,
         **extra,
@@ -207,21 +215,27 @@ def _publish(
     referral: Referral,
     tipo: str,
     mensaje: str,
-    to: uuid.UUID,
+    to: uuid.UUID | None,
     **extra: object,
 ) -> None:
-    """After the commit: the reactors notify, bill and move the counters."""
+    """After the commit: the reactors notify, bill and move the counters.
+
+    ``to`` is ``None`` for the answer to a referral that came from a partner system:
+    there is no local sender to tell (the billing and counter reactors still run).
+    """
 
     publish(
         DomainEvent(
             tipo=tipo,
             mensaje=_clip(mensaje),
-            recipients=(to,),
+            recipients=(to,) if to is not None else (),
             paciente_id=referral.patient_id,
             datos={
                 "remision_id": str(referral.id),
                 "estado": referral.status.value,
-                "remitente_id": str(referral.referring_user_id),
+                "remitente_id": (
+                    str(referral.referring_user_id) if referral.referring_user_id else None
+                ),
                 "especialista_id": str(referral.specialist_user_id),
                 **extra,
             },
@@ -256,15 +270,37 @@ def _target_specialist(db: Session, specialist_id: uuid.UUID) -> User:
     return specialist
 
 
+def _by_idempotency_key(db: Session, key: str) -> Referral | None:
+    return db.scalar(
+        select(Referral).where(Referral.idempotency_key == key).execution_options(populate_existing=True)
+    )
+
+
 def create(
-    db: Session, *, actor: User, patient_id: uuid.UUID, specialist_id: uuid.UUID, motivo: str
+    db: Session,
+    *,
+    actor: User,
+    patient_id: uuid.UUID,
+    specialist_id: uuid.UUID,
+    motivo: str,
+    idempotency_key: str | None = None,
 ) -> Referral:
+    """Create a referral. With ``idempotency_key`` the call is repeatable: a second
+    call with the same key returns the referral the first one made, with no new row,
+    no audit entry and no notification (the unique index decides a concurrent race).
+    """
+
     reason = (motivo or "").strip()
     if not reason:
         raise InvalidValueError("La remision exige un motivo")
     patient = patients_service.get_patient(db, patient_id)
     patient_access.ensure_staff_patient_scope(db, actor, patient.id)
     specialist = _target_specialist(db, specialist_id)
+
+    if idempotency_key is not None:
+        existing = _by_idempotency_key(db, idempotency_key)
+        if existing is not None:
+            return existing
 
     referral = Referral(
         patient_id=patient.id,
@@ -273,9 +309,17 @@ def create(
         motivo=reason,
         status=ReferralStatus.PENDING,
         created_at=_now(),
+        idempotency_key=idempotency_key,
     )
     db.add(referral)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        existing = _by_idempotency_key(db, idempotency_key) if idempotency_key else None
+        if existing is None:
+            raise
+        return existing
     trail.audit(
         db,
         action=AuditAction.REFERRAL_CREATED,
@@ -296,6 +340,111 @@ def create(
     return referral
 
 
+def create_external(
+    db: Session,
+    *,
+    patient: Patient,
+    specialist: User,
+    motivo: str,
+    origen: str,
+    referencia: str,
+    idempotency_key: str,
+    ip_address: str | None = None,
+) -> Referral:
+    """A referral that arrived from a partner system (interoperability, slide 31).
+
+    There is no local sender: ``referring_user_id`` stays NULL and ``origen_externo``
+    names the client. It uses the same inbox, states and access rules as any referral
+    (the specialist reads the patient while it is pending, accepted or completed).
+
+    Flushes and audits but does NOT commit: the receiver commits it together with the
+    queue record, then calls :func:`announce_created`.
+    """
+
+    reason = (motivo or "").strip()
+    if not reason:
+        raise InvalidValueError("La remision exige un motivo")
+    referral = Referral(
+        patient_id=patient.id,
+        referring_user_id=None,
+        specialist_user_id=specialist.id,
+        motivo=reason[:1000],
+        status=ReferralStatus.PENDING,
+        created_at=_now(),
+        idempotency_key=idempotency_key[:160],
+        origen_externo=origen,
+        referencia_externa=referencia[:120],
+    )
+    db.add(referral)
+    db.flush()
+    trail.audit(
+        db,
+        action=AuditAction.REFERRAL_CREATED,
+        entity_type=ENTITY,
+        entity_id=referral.id,
+        actor=None,
+        metadata=_audit_meta(
+            referral, motivo=reason[:1000], origen="externo", cliente=origen,
+            referencia_externa=referencia[:120],
+        ),
+        ip_address=ip_address,
+    )
+    return referral
+
+
+def announce_created(db: Session, referral: Referral, *, origen: str) -> None:
+    """After the commit: the referral lands in the specialist's inbox and live channel."""
+
+    referral = get_referral(db, referral.id)
+    _publish(
+        db,
+        referral,
+        EVENT_CREATED,
+        f"Nueva remision de {origen} (sistema externo): {_patient_name(referral)}. "
+        f"Motivo: {referral.motivo}",
+        referral.specialist_user_id,
+        origen_externo=origen,
+    )
+
+
+def resolve_default_specialist(db: Session) -> User | None:
+    """``INTEROP_DEFAULT_SPECIALIST`` (user id or username) when it is a usable especialista."""
+
+    from app.core.config import get_settings
+
+    raw = (get_settings().interop_default_specialist or "").strip()
+    if not raw:
+        return None
+    try:
+        user = db.scalar(select(User).where(User.id == uuid.UUID(raw)))
+    except ValueError:
+        user = db.scalar(select(User).where(User.username == raw))
+    if user is None:
+        return None
+    try:
+        return _target_specialist(db, user.id)
+    except InvalidValueError:
+        return None
+
+
+def specialist_of_organization(db: Session, organization_code: str | None) -> User | None:
+    """First active especialista (by name) of the IPS with this code, or ``None``."""
+
+    if not organization_code:
+        return None
+    organization = db.scalar(
+        select(Organization).where(
+            Organization.code == organization_code, Organization.deleted_at.is_(None)
+        )
+    )
+    if organization is None:
+        return None
+    row = db.execute(
+        specialists_stmt().where(User.organization_id == organization.id).limit(1)
+    ).first()
+    return row[0] if row is not None else None
+
+
 # ---------------------------------------------------------------------------
 # Specialist actions
 # ---------------------------------------------------------------------------
@@ -313,7 +462,28 @@ def _ensure_state(referral: Referral, expected: ReferralStatus, action: str) -> 
         )
 
 
-def accept(db: Session, referral: Referral, *, actor: User) -> Referral:
+BeforeCommit = Callable[[Session, Referral], object]
+
+
+def _run_before_commit(db: Session, referral: Referral, hook: BeforeCommit | None) -> None:
+    """Run ``hook`` in the SAME transaction as the status change, just before the commit.
+
+    If it raises, the whole decision (status, timestamps, audit row) is rolled back and the
+    error propagates: the status change and whatever the hook wrote are one unit.
+    """
+
+    if hook is None:
+        return
+    try:
+        hook(db, referral)
+    except Exception:
+        db.rollback()
+        raise
+
+
+def accept(
+    db: Session, referral: Referral, *, actor: User, before_commit: BeforeCommit | None = None
+) -> Referral:
     _ensure_addressee(referral, actor)
     _ensure_state(referral, ReferralStatus.PENDING, "aceptar")
     referral.status = ReferralStatus.ACCEPTED
@@ -326,6 +496,7 @@ def accept(db: Session, referral: Referral, *, actor: User) -> Referral:
         actor=actor,
         metadata=_audit_meta(referral),
     )
+    _run_before_commit(db, referral, before_commit)
     commit(db)
     referral = get_referral(db, referral.id)
     _publish(
@@ -340,7 +511,10 @@ def accept(db: Session, referral: Referral, *, actor: User) -> Referral:
     return referral
 
 
-def reject(db: Session, referral: Referral, *, actor: User, motivo: str) -> Referral:
+def reject(
+    db: Session, referral: Referral, *, actor: User, motivo: str,
+    before_commit: BeforeCommit | None = None,
+) -> Referral:
     _ensure_addressee(referral, actor)
     _ensure_state(referral, ReferralStatus.PENDING, "rechazar")
     reason = (motivo or "").strip()
@@ -357,6 +531,7 @@ def reject(db: Session, referral: Referral, *, actor: User, motivo: str) -> Refe
         actor=actor,
         metadata=_audit_meta(referral, motivo_rechazo=reason),
     )
+    _run_before_commit(db, referral, before_commit)
     commit(db)
     referral = get_referral(db, referral.id)
     _publish(

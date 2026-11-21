@@ -11,6 +11,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from app.models.clinical import Encounter, Observation
+from app.models.consent import Consent
 from app.models.enums import (
     AdministrativeGender,
     BedStatus,
@@ -24,6 +25,7 @@ from app.models.enums import (
     RoleCode,
 )
 from app.models.identity import Role, User
+from app.models.interop import InteropClient
 from app.models.organization import Location, Organization
 from app.models.patient import Patient
 
@@ -126,3 +128,39 @@ def make_location(**overrides) -> Location:
     )
     values.update(overrides)
     return Location(**values)
+
+
+def make_interop_client(**overrides) -> InteropClient:
+    """A registered partner system. Defaults to a partner-bound consent target."""
+
+    values = dict(
+        id=uuid.uuid4(),
+        client_id="socio-demo",
+        name="Socio Demo",
+        secret_hash="not-a-hash",
+        scopes=["system/Observation.write"],
+        signing_secret="not-a-secret",
+        is_active=True,
+        last_used_at=None,
+    )
+    values.update(overrides)
+    return InteropClient(**values)
+
+
+def make_consent(**overrides) -> Consent:
+    """An active consent bound to a partner by default (the R32 critical path)."""
+
+    values = dict(
+        id=uuid.uuid4(),
+        patient_id=uuid.uuid4(),
+        organization_id=None,
+        interop_client_id=uuid.uuid4(),
+        valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        valid_until=None,
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        created_by=None,
+        revoked_at=None,
+        revoked_by=None,
+    )
+    values.update(overrides)
+    return Consent(**values)

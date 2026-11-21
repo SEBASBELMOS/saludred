@@ -132,7 +132,7 @@ def create_user(db: Session, data: AccountCreate, *, actor: User) -> User:
     elif data.role == RoleCode.PATIENT:
         document = (data.patient_document or "").strip()
         patient = db.scalar(
-            select(Patient).where(Patient.document_number == document, Patient.deleted_at.is_(None))
+            select(Patient).where(Patient.document_matches(document), Patient.deleted_at.is_(None))
         ) if document else None
         if patient is None:
             raise InvalidValueError("No hay un paciente con ese documento")

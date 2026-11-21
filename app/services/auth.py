@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from app.core.security import verify_password
+from app.core.security import burn_password_check, verify_and_update_password
 from app.events.bus import DomainEvent, publish
 from app.models.enums import AuditAction
 from app.models.identity import User
@@ -77,11 +77,14 @@ def authenticate(db: Session, username: str, password: str) -> User:
         commit(db)
         raise AccountLockedError
 
-    credentials_ok = (
-        user is not None
-        and user.is_active
-        and verify_password(password, user.password_hash)
-    )
+    credentials_ok = False
+    new_hash: str | None = None
+    if user is not None and user.is_active:
+        credentials_ok, new_hash = verify_and_update_password(password, user.password_hash)
+    else:
+        # No account (or a disabled one): spend the cost of a verification anyway, so
+        # the response time does not tell which usernames exist.
+        burn_password_check(password)
 
     if not credentials_ok:
         locked_now = False
@@ -127,13 +130,19 @@ def authenticate(db: Session, username: str, password: str) -> User:
 
     user.failed_login_attempts = 0
     user.last_login_at = datetime.now(timezone.utc)
+    metadata: dict[str, object] = {"username": username, "outcome": "success"}
+    if new_hash is not None:
+        # The hash was bcrypt (or Argon2id with older parameters): it is replaced by
+        # the current scheme in this same transaction, only after a CORRECT login.
+        user.password_hash = new_hash
+        metadata["password_rehashed"] = True
     trail.audit(
         db,
         action=AuditAction.LOGIN,
         entity_type="users",
         entity_id=user.id,
         actor=user,
-        metadata={"username": username, "outcome": "success"},
+        metadata=metadata,
     )
     commit(db)
     return user

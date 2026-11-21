@@ -32,6 +32,7 @@ const kinds: Record<string, string> = {
   remision_aceptada: "Remisión aceptada",
   remision_rechazada: "Remisión rechazada",
   remision_completada: "Remisión completada",
+  respuesta_socio: "Respuesta de otra institución",
   cuenta_bloqueada: "Cuenta bloqueada",
 };
 const kindName = (tipo: string) =>
@@ -44,6 +45,7 @@ const destinations: Record<string, { to: string; label: string }> = {
   remision_aceptada: { to: "/referrals", label: "Ver remisiones" },
   remision_rechazada: { to: "/referrals", label: "Ver remisiones" },
   remision_completada: { to: "/referrals", label: "Ver remisiones" },
+  respuesta_socio: { to: "/referrals", label: "Ver remisiones" },
 };
 export const destinationFor = (tipo: string, role: Role) => {
   const destination = destinations[tipo];

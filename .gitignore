@@ -1,7 +1,11 @@
-# Environment
+# Environment (secrets): never commit them. If one was committed, rotate it:
+# deleting it does not remove it from the git history (scripts/escanear_secretos.py).
 .env
 .env.*
 !.env.example
+pass.env
+*.env
+.env.bak*
 
 # Python
 __pycache__/

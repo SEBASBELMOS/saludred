@@ -196,4 +196,4 @@ def test_there_is_a_single_migration_head() -> None:
 
     config = Config("alembic.ini")
     config.set_main_option("script_location", "migrations")
-    assert ScriptDirectory.from_config(config).get_heads() == ["c9e4a6b2d503"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["f3d1b2c4a5e6"]

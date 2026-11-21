@@ -193,3 +193,26 @@ def test_inventory_view_shows_the_current_patient(db: Session) -> None:  # noqa:
     assert free["paciente_nombre"] is None
     assert free["ocupada_desde"] is None
     assert free["ips_nombre"]
+
+
+def test_the_encryption_migration_recreates_the_view_without_the_document(db: Session) -> None:  # noqa: F811
+    """With the document encrypted, the view must not expose it (neither plain nor cipher)."""
+
+    path = next(
+        Path(__file__).resolve().parents[1].glob("migrations/versions/e8b3a5c7d921_*.py")
+    )
+    spec = importlib.util.spec_from_file_location("encryption_migration", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    assert "document_number" not in migration.VIEW_SQL
+    assert "paciente_documento" not in migration.VIEW_SQL
+    assert "p.document_number AS paciente_documento" in migration.VIEW_SQL_PREVIOUS
+
+    db.execute(text(migration.VIEW_SQL))
+    rows = db.execute(text(f"SELECT * FROM {migration.VIEW}")).mappings().all()
+    assert rows and "paciente_documento" not in rows[0]
+    occupied = [r for r in rows if r["paciente_id"] is not None]
+    assert occupied and all(r["paciente_nombre"] for r in occupied)
+    # The previous view is the one that carried the document.
+    assert "paciente_documento" in _load_view_migration().INVENTORY_VIEW_SQL

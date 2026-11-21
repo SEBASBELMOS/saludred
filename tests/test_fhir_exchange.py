@@ -48,7 +48,8 @@ def test_bundle_structure(record) -> None:
     assert response.headers["content-type"].startswith("application/fhir+json")
     bundle = response.json()
     assert bundle["resourceType"] == "Bundle" and bundle["type"] == "collection"
-    assert bundle["total"] == len(bundle["entry"])
+    # FHIR bdl-1: ``total`` is only allowed on searchset and history Bundles, not on a collection.
+    assert "total" not in bundle
     assert _kinds(bundle) == {
         "Patient": 1, "Encounter": 1, "Observation": len(VITALS), "RiskAssessment": 1,
     }

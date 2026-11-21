@@ -17,6 +17,7 @@ import { useAuth } from "../auth/AuthProvider";
 import { canAnswerReferral } from "../auth/permissions";
 import { usePending } from "../alerts/useAlerts";
 import { PatientRecordDialog } from "../patients/PatientRecordDialog";
+import { ExternalReferrals } from "./ExternalReferrals";
 import { useReferrals } from "./useReferrals";
 import {
   isStale,
@@ -266,6 +267,9 @@ export function ReferralsPage() {
           </EmptyState>
         )}
       </Panel>
+      <div className="mt-5">
+        <ExternalReferrals />
+      </div>
       {answer?.kind === "reject" && (
         <RejectDialog
           referral={answer.referral}

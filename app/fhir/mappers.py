@@ -420,7 +420,9 @@ def referral_to_fhir(
         },
         "subject": {"reference": patient_ref},
         "requester": _practitioner_reference(
-            identifier_system, referral.referring_user_id, requester_name
+            identifier_system,
+            referral.referring_user_id or f"externo:{referral.origen_externo}",
+            requester_name,
         ),
         "performer": [
             _practitioner_reference(

@@ -340,6 +340,89 @@ def raise_critical_alert(db: Session, report_id: uuid.UUID) -> tuple[Alert, bool
     return alert, True
 
 
+def raise_critical_alert_from_observation(
+    db: Session,
+    patient: Patient,
+    *,
+    label: str,
+    code: str,
+    value: float,
+    unit: str,
+    origin: str,
+    observation_id: uuid.UUID | None = None,
+) -> tuple[Alert, bool]:
+    """Critical alert for a critical lab value that arrived from a partner system.
+
+    The same ``paciente_critico`` alert as the AI one (``ai_report_id`` stays NULL): one
+    ACTIVE alert per patient, until somebody acknowledges it with a note (R20). If one is
+    already active the value is attached to it and nobody is told twice. Returns
+    ``(alert, created)``; the caller announces it when ``created``.
+    """
+
+    datos = {
+        "origen": "externo",
+        "cliente": origin,
+        "codigo": code,
+        "valor": value,
+        "unidad": unit,
+        "observacion_id": str(observation_id) if observation_id else None,
+    }
+    existing = active_critical_alert(db, patient.id)
+    if existing is not None:
+        existing.datos = {**(existing.datos or {}), "interop": datos}
+        commit(db)
+        return existing, False
+
+    responsible = patient.responsible_clinician_id
+    if responsible is not None and not recipients.is_usable_clinician(db, responsible):
+        responsible = None
+    shown = f"{value:g}"
+    alert = Alert(
+        kind=AlertKind.CRITICAL_PATIENT,
+        nivel=LEVEL_CRITICAL,
+        status=AlertStatus.ACTIVE,
+        mensaje=(
+            f"Alerta critica: {label} {shown} {unit} de {patient.first_name} {patient.last_name}, "
+            f"recibida del sistema externo {origin}. Revise y reconozca la alerta."
+        ),
+        patient_id=patient.id,
+        ai_report_id=None,
+        organization_id=db.scalar(recipients.latest_encounter_organization_stmt(patient.id)),
+        recipient_user_id=responsible,
+        created_at=datetime.now(timezone.utc),
+        datos=datos,
+    )
+    db.add(alert)
+    try:
+        db.flush()
+    except IntegrityError:
+        # Two messages raced for the same patient: the unique index kept one.
+        db.rollback()
+        winner = active_critical_alert(db, patient.id)
+        if winner is None:
+            raise
+        return winner, False
+    trail.audit(
+        db,
+        action=AuditAction.ALERT_CREATED,
+        entity_type=ENTITY,
+        entity_id=alert.id,
+        actor=None,
+        metadata={
+            "alert_id": str(alert.id),
+            "kind": alert.kind.value,
+            "patient_id": str(patient.id),
+            "nivel": LEVEL_CRITICAL,
+            "origen": "externo",
+            "cliente": origin,
+            "codigo": code,
+            "valor": value,
+        },
+    )
+    commit(db)
+    return alert, True
+
+
 def announce_critical(db: Session, alert: Alert) -> None:
     patient = db.get(Patient, alert.patient_id) if alert.patient_id else None
     to = recipients.for_patient(db, patient) if patient is not None else ()

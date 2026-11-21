@@ -390,6 +390,54 @@ def _groq(monkeypatch, statuses, headers=None, model="qwen/qwen3.8-27b", **kwarg
     return client, sent, waits
 
 
+def _stalling_post(monkeypatch, stalls):  # noqa: ANN001, ANN202
+    import httpx
+
+    timeouts: list[float] = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):  # noqa: ANN001, ANN202
+        timeouts.append(timeout)
+        if len(timeouts) <= stalls:
+            raise httpx.ReadTimeout("stalled")
+        reply = {"choices": [{"message": {"content": "ok"}}]}
+        return httpx.Response(200, json=reply, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    return timeouts
+
+
+def test_a_stalled_request_is_sent_again(monkeypatch) -> None:
+    from app.services.rag.llm import GroqClient
+
+    timeouts = _stalling_post(monkeypatch, stalls=2)
+    client = GroqClient("k", "m", "https://api.groq.test/openai/v1", 8.0, 600, timeout_retries=2)
+    assert client.complete([]) == "ok"
+    assert timeouts == [8.0, 8.0, 8.0]
+
+
+def test_stalling_past_the_retries_reports_a_timeout(monkeypatch) -> None:
+    from app.services.rag.llm import GroqClient, LlmUnavailableError
+
+    timeouts = _stalling_post(monkeypatch, stalls=3)
+    client = GroqClient("k", "m", "https://api.groq.test/openai/v1", 8.0, 600, timeout_retries=2)
+    with pytest.raises(LlmUnavailableError) as caught:
+        client.complete([])
+    assert caught.value.reason == "timeout" and len(timeouts) == 3
+
+
+def test_only_the_live_client_uses_short_attempts(monkeypatch) -> None:
+    from app.core.config import get_settings
+    from app.services.rag import llm
+
+    monkeypatch.setattr(get_settings(), "groq_api_key", "k")
+    llm.set_client()
+    live = llm.get_client()
+    assert live._timeout == get_settings().groq_attempt_timeout_seconds
+    assert live._timeout_retries == get_settings().groq_timeout_retries
+    plain = llm.build_client("openai/gpt-oss-20b")
+    assert plain._timeout == get_settings().groq_timeout_seconds and plain._timeout_retries == 0
+
+
 def test_429_honors_retry_after_then_backs_off_exponentially(monkeypatch) -> None:
     client, sent, waits = _groq(monkeypatch, [429, 429, 200], headers=[{"retry-after": "7"}, {}], max_retries=5)
     assert client.complete([]) == "ok"

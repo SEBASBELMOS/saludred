@@ -54,6 +54,21 @@ def test_a_question_without_patient_answers_with_numbered_sources(scene) -> None
     assert user["content"].startswith("CONTEXTO:\n[1] (") and f"PREGUNTA: {QUESTION}" in user["content"]
 
 
+def test_omitting_k_uses_the_configured_default(scene, monkeypatch) -> None:
+    db, client_as, _patient, _llm = scene
+    monkeypatch.setattr(get_settings(), "rag_default_k", 4)
+    doctor = client_as("operador.norte")
+
+    def last_k() -> int:
+        entries = db.scalars(select(AuditLog).where(AuditLog.action == AuditAction.RAG_QUERY)).all()
+        return entries[-1].metadata_json["k"]
+
+    assert _ask(doctor).status_code == 200
+    assert last_k() == 4
+    assert _ask(doctor, k=2).status_code == 200
+    assert last_k() == 2
+
+
 def test_an_off_topic_question_abstains_and_stores_nothing(scene) -> None:
     db, client_as, patient, llm = scene
     response = _ask(client_as("operador.norte"), question="¿Quién ganó el mundial de fútbol de 2014?",

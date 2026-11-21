@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.error_handlers import register_error_handlers
 from app.api.routes import (
     accounts,
+    agent,
     ai,
     alerts,
     analytics,
@@ -24,12 +25,14 @@ from app.api.routes import (
     cleaning,
     clinical_record,
     cohort,
+    consents,
     integration,
     encounters,
     events,
     fhir_hooks,
     health,
     imaging,
+    interop,
     me,
     notifications,
     observations,
@@ -41,7 +44,9 @@ from app.api.routes import (
 from app.billing.store import init_billing
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.ratelimit import RateLimitMiddleware
 from app.services import alert_monitor
+from app.services.agent import runtime as agent_runtime
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -52,6 +57,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Billing indexes (MongoDB). Never raises: with Mongo down the API starts
     # and the billing routes answer 503 until it is back.
     init_billing()
+
+    # Clinical agent: durable memory (Postgres) and the harness. Never raises.
+    await agent_runtime.startup()
 
     # Alert monitor (R20): escalation and the free-but-not-cleaned bed alert.
     # An in-process timer is valid because the API runs ONE worker; tests turn
@@ -66,6 +74,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             monitor.cancel()
             with suppress(asyncio.CancelledError):
                 await monitor
+        await agent_runtime.shutdown()
 
 app = FastAPI(
     title=settings.project_name,
@@ -83,13 +92,18 @@ app = FastAPI(
 register_error_handlers(app)
 
 def configure_http_security(application: FastAPI, cors_origins: list[str]) -> None:
-    """CORS allow-list and defensive headers for every response.
+    """Rate limit, CORS allow-list and defensive headers for every response.
 
     The UI is served by nginx from the same origin as the API, so CORS is not
     needed in the normal deployment: without configured origins no CORS
     middleware is installed and no ``Access-Control-Allow-Origin`` is ever sent.
     Auth uses an Authorization header, never cookies, hence no credentials.
+
+    The rate limit is the innermost of the three: the 429 it answers still goes out
+    with the security headers (and the CORS ones, when configured).
     """
+
+    application.add_middleware(RateLimitMiddleware)
 
     if cors_origins:
         application.add_middleware(
@@ -127,14 +141,19 @@ app.include_router(beds.router)
 app.include_router(cleaning.router)
 app.include_router(ai.router)
 app.include_router(rag.router)
+app.include_router(agent.router)
 app.include_router(clinical_record.router)
 app.include_router(cohort.router)
 app.include_router(imaging.router)
 app.include_router(integration.router)
 app.include_router(fhir_hooks.router)
+# Interoperability between teams: the partner routes live at the root (slide 28).
+app.include_router(interop.partner_router)
+app.include_router(interop.admin_router)
 app.include_router(billing.router)
 app.include_router(notifications.router)
 app.include_router(referrals.router)
+app.include_router(consents.router)
 app.include_router(alerts.router)
 app.include_router(events.router)
 

@@ -26,6 +26,10 @@ import { FhirExport } from "./FhirExport";
 import { ResponsibleClinician } from "./ResponsibleClinician";
 import { PatientReferrals } from "../referrals/PatientReferrals";
 import { ReferDialog } from "../referrals/ReferralDialogs";
+import {
+  ExternalReferDialog,
+  ExternalReferrals,
+} from "../referrals/ExternalReferrals";
 export function PatientRecordDialog({
   patientId,
   onClose,
@@ -85,6 +89,13 @@ export function PatientRecordDialog({
           onClick={() => setMode("refer")}
         />
       )}
+      {canRefer(user!.role) && (
+        <Action
+          secondary
+          label="Remitir a otra institución"
+          onClick={() => setMode("refer-external")}
+        />
+      )}
       {canRegisterEncounter(user!.role) && (
         <Action
           secondary
@@ -131,6 +142,9 @@ export function PatientRecordDialog({
               <PatientReferrals patientId={patientId} />
             </div>
             <div className="mt-5">
+              <ExternalReferrals patientId={patientId} />
+            </div>
+            <div className="mt-5">
               <Panel title="Estudios de imagen">
                 {studies.error ? (
                   <ErrorState error={studies.error} retry={studies.refetch} />
@@ -164,6 +178,12 @@ export function PatientRecordDialog({
       )}
       {record.data && mode === "refer" && (
         <ReferDialog
+          patient={record.data.patient}
+          onClose={() => setMode("record")}
+        />
+      )}
+      {record.data && mode === "refer-external" && (
+        <ExternalReferDialog
           patient={record.data.patient}
           onClose={() => setMode("record")}
         />

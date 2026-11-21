@@ -32,8 +32,17 @@ print("La base de datos no respondio tras 120 segundos.", file=sys.stderr)
 sys.exit(1)
 PYCHECK
 
-echo "Aplicando migraciones..."
-alembic upgrade head
+# RUN_MIGRATIONS (default "true": the historical behaviour, so nothing changes where it
+# is not set). On the shared Neon database the deploy procedure sets RUN_MIGRATIONS=false
+# in the ASUS .env BEFORE restarting `api`, and the migrations are run by hand, after a
+# backup, from a throwaway container (docs/ENTREGA_FINAL.md, "Despliegue"). Otherwise a
+# plain restart would apply any pending revision to production data unattended.
+if [ "${RUN_MIGRATIONS:-true}" = "false" ]; then
+    echo "RUN_MIGRATIONS=false: migraciones omitidas (se aplican a mano)."
+else
+    echo "Aplicando migraciones..."
+    alembic upgrade head
+fi
 
 # El seed solo corre si se pide explicitamente. Si la base ya tiene datos, el
 # script aborta por su cuenta y el arranque continua: reiniciar el contenedor

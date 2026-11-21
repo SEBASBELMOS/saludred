@@ -155,10 +155,10 @@ def patient_by_identifier(
         except ValueError:
             return None
         stmt = base.where(
-            Patient.document_type == document_type, Patient.document_number == number
+            Patient.document_type == document_type, Patient.document_matches(number)
         )
     elif system == f"{prefix}:numero":
-        stmt = base.where(Patient.document_number == value)
+        stmt = base.where(Patient.document_matches(value))
     elif system == f"{prefix}:patient-id":
         try:
             stmt = base.where(Patient.id == uuid.UUID(value))
@@ -177,14 +177,14 @@ def _patient_by_bare_value(db: Session, base: Select[tuple[Patient]], value: str
         attempts.append(base.where(Patient.id == uuid.UUID(value)))
     except ValueError:
         pass
-    attempts.append(base.where(Patient.document_number == value))
+    attempts.append(base.where(Patient.document_matches(value)))
     doc_type, _, number = value.partition("-")
     if number:
         try:
             attempts.append(
                 base.where(
                     Patient.document_type == DocumentType(doc_type),
-                    Patient.document_number == number,
+                    Patient.document_matches(number),
                 )
             )
         except ValueError:
@@ -370,12 +370,17 @@ def handle_observation(
     )
 
 
-def _target_encounter(db: Session, patient_id: uuid.UUID) -> Encounter | None:
+def target_encounter(db: Session, patient_id: uuid.UUID) -> Encounter | None:
+    """The open encounter of the patient, else the most recent one, else ``None``."""
+
     for open_only in (True, False):
         encounter = db.scalar(target_encounter_stmt(patient_id, open_only=open_only))
         if encounter is not None:
             return encounter
     return None
+
+
+_target_encounter = target_encounter
 
 
 def _flush_is_duplicate(db: Session) -> bool:

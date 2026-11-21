@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<skill name="triage-criticidad" description="Cómo interpretar la criticidad de un paciente en urgencias a partir de sus signos vitales y qué reportar al clínico.">
+  <titulo>Interpretación de criticidad en urgencias</titulo>
+  <paso n="1">Llame a `consultar_paciente` para obtener edad, sexo y los últimos signos vitales (temperatura, frecuencia cardíaca, frecuencia respiratoria, saturación de oxígeno, presión sistólica y diastólica).</paso>
+  <paso n="2">Si falta algún signo vital, dígalo: no lo estime ni lo suponga. La criticidad con datos incompletos es menos confiable.</paso>
+  <paso n="3">Llame a `buscar_guias` con el hallazgo concreto (por ejemplo "saturación baja y frecuencia respiratoria alta criterios de triage") para obtener el criterio de la norma.</paso>
+  <paso n="4">Reporte en este orden: valores relevantes, criterio de la fuente con su cita [n], y el nivel de atención que la fuente respalda. Si hay un reporte de IA aprobado en el resumen, menciónelo como apoyo, no como diagnóstico.</paso>
+  <paso n="5">No asigne un nivel de triage que ninguna fuente respalde. Si no hay evidencia, diga que no la encontró.</paso>
+  <paso n="6">Cierre con "Sugerencia para revisión del clínico": el triage final lo decide el médico.</paso>
+</skill>

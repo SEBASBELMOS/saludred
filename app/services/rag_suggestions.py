@@ -28,7 +28,7 @@ from app.models.enums import AuditAction, RagAnswerMode, RagBase, RagSuggestionS
 from app.models.identity import User
 from app.models.patient import Patient
 from app.models.rag import EMBEDDING_DIM, RagChunk, RagSuggestion
-from app.schemas.rag import RagSource, RagSuggestionDetail, RagSuggestionRead
+from app.schemas.rag import MAX_FRAGMENT_CHARS, RagSource, RagSuggestionDetail, RagSuggestionRead
 from app.services import patient_access, pseudonymization, trail
 from app.services import patients as patients_service
 from app.services.ai_reports import MIN_REVIEW_NOTE
@@ -81,8 +81,9 @@ def ask(
     patient_id: uuid.UUID | None,
     base: str,
     method: str,
-    k: int,
+    k: int | None,
 ) -> AskResult:
+    k = k or get_settings().rag_default_k
     patient: Patient | None = None
     context: PatientContext | None = None
     if patient_id is not None:
@@ -142,7 +143,13 @@ def ask(
 
     source_rows = [
         RagSource(
-            n=s.n, chunk_id=s.chunk_id, doc_id=s.doc_id, title=s.title, url=s.url, score=s.score
+            n=s.n,
+            chunk_id=s.chunk_id,
+            doc_id=s.doc_id,
+            title=s.title,
+            url=s.url,
+            score=s.score,
+            fragmento=s.text[:MAX_FRAGMENT_CHARS],
         ).model_dump()
         for s in sources
     ]

@@ -29,9 +29,9 @@ def main() -> None:
 
     stmt = (
         select(
-            Patient.first_name,
-            Patient.last_name,
-            Patient.document_number,
+            # The entity, not its columns: the document may be stored encrypted and
+            # ``Patient.document_number`` returns it decrypted.
+            Patient,
             Encounter.encounter_class,
             Encounter.status,
             BedRequest.required_service,
@@ -66,8 +66,8 @@ def main() -> None:
         bed = row.bed_code or "(pendiente)"
         bed_status = row.bed_status.value if row.bed_status else "-"
         print(
-            f"{row.first_name + ' ' + row.last_name:28} "
-            f"{row.document_number:12} "
+            f"{row.Patient.full_name:28} "
+            f"{row.Patient.document_number:12} "
             f"{row.encounter_class.value + '/' + row.status.value:12} "
             f"{row.request_status.value:10} "
             f"{bed:24} {bed_status:12} {row.ips_name}"

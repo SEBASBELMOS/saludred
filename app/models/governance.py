@@ -7,13 +7,16 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Uuid,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import JSONB
@@ -72,6 +75,16 @@ class AuditLog(UUIDPrimaryKeyMixin, Base):
     """
 
     __tablename__ = "audit_log"
+    __table_args__ = (
+        # One row per position of the chain; the old rows (seq NULL) are not constrained.
+        Index(
+            "uq_audit_log_seq",
+            "seq",
+            unique=True,
+            postgresql_where=text("seq IS NOT NULL"),
+            sqlite_where=text("seq IS NOT NULL"),
+        ),
+    )
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
@@ -88,6 +101,11 @@ class AuditLog(UUIDPrimaryKeyMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )
+    # Chain (app/services/audit_chain.py). NULL on the rows written before the chain
+    # existed: it starts at the first new row and the old ones are not rewritten.
+    seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    row_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     user: Mapped["object | None"] = relationship("User", lazy="joined")
 
@@ -171,6 +189,19 @@ class FhirInboundEvent(UUIDPrimaryKeyMixin, Base):
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )
+    # Interoperability between teams (docs/INTEROP.md). The same table is the
+    # reconciliation queue: a message that arrived through the partner API but could
+    # not be completed (patient unknown, or no specialist to receive a referral) stays
+    # here as ``pendiente`` and an admin turns it into ``conciliado``. All NULL for the
+    # deliveries of the FHIR server.
+    origen_externo: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    id_federado_recibido: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    estado_conciliacion: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    motivo_pendiente: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    conciliado_por: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    conciliado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def __repr__(self) -> str:
         return f"<FhirInboundEvent {self.fhir_resource_type}/{self.fhir_resource_id}>"

@@ -25,6 +25,7 @@ from fastapi import APIRouter, BackgroundTasks, Query, status
 from app.api.deps import CurrentUser, DbSession
 from app.core import authz
 from app.models.enums import ReferralStatus, RoleCode
+from app.models.referral import Referral
 from app.schemas.referral import (
     ReferralCreate,
     ReferralRead,
@@ -34,10 +35,21 @@ from app.schemas.referral import (
 )
 from app.services import fhir_autosync
 from app.services import referrals as referrals_service
+from app.services.interop import roundtrip
 
 router = APIRouter(prefix="/api/v1/referrals", tags=["remisiones"])
 
 LIST_ROLES = (RoleCode.ADMIN, RoleCode.IPS_CLINICAL_OPERATOR, RoleCode.SPECIALIST)
+
+
+def _answer_partner(db: DbSession, background: BackgroundTasks, referral: Referral) -> None:
+    """R30: the decision AND its Task row are already committed together (``stage_answer`` ran
+    inside the accept/reject transaction, so the Task is never lost). Only the delivery is left:
+    it is sent after the response, so a slow partner cannot hold the specialist."""
+
+    outbox_id = roundtrip.undelivered_answer_id(db, referral)
+    if outbox_id is not None:
+        background.add_task(roundtrip.deliver_queued, outbox_id)
 
 
 @router.post(
@@ -115,10 +127,13 @@ def accept_referral(
 ) -> ReferralRead:
     authz.require_role(user, RoleCode.SPECIALIST)
     referral = referrals_service.accept(
-        db, referrals_service.get_referral(db, referral_id), actor=user
+        db, referrals_service.get_referral(db, referral_id), actor=user,
+        before_commit=roundtrip.stage_answer,
     )
     fhir_autosync.enqueue(background, "referral", referral.id, user.id)
-    return referrals_service.to_read(referral)
+    read = referrals_service.to_read(referral)
+    _answer_partner(db, background, referral)
+    return read
 
 
 @router.post(
@@ -135,10 +150,13 @@ def reject_referral(
 ) -> ReferralRead:
     authz.require_role(user, RoleCode.SPECIALIST)
     referral = referrals_service.reject(
-        db, referrals_service.get_referral(db, referral_id), actor=user, motivo=payload.motivo
+        db, referrals_service.get_referral(db, referral_id), actor=user, motivo=payload.motivo,
+        before_commit=roundtrip.stage_answer,
     )
     fhir_autosync.enqueue(background, "referral", referral.id, user.id)
-    return referrals_service.to_read(referral)
+    read = referrals_service.to_read(referral)
+    _answer_partner(db, background, referral)
+    return read
 
 
 @router.post(

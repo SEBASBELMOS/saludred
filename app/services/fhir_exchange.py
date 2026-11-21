@@ -326,7 +326,7 @@ def import_bundle(
     patient = db.scalar(
         select(Patient).where(
             Patient.document_type == data.document_type,
-            Patient.document_number == data.document_number,
+            Patient.document_matches(data.document_number),
             Patient.deleted_at.is_(None),
         )
     )

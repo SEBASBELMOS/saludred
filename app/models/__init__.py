@@ -12,9 +12,12 @@ from app.models.beds import BedAssignment, BedRequest, BedStatusEvent
 from app.models.cleaning import BedCleaningRecord
 from app.models.clinical import Encounter, Observation
 from app.models.cohort import CohortCluster, CohortRecord
+from app.models.consent import Consent
 from app.models.governance import AuditLog, FhirInboundEvent, FhirSyncLog, RecordVersion
 from app.models.identity import Role, User
 from app.models.imaging import ImagingStudy
+from app.models.interop import InteropClient, InteropNonce
+from app.models.interop_referral import InteropTaskOutbox, OutboundReferral, PartnerDiagnosticReport
 from app.models.notification import Notification
 from app.models.organization import Location, Organization
 from app.models.patient import Patient
@@ -32,10 +35,16 @@ __all__ = [
     "BedStatusEvent",
     "CohortCluster",
     "CohortRecord",
+    "Consent",
     "Encounter",
     "FhirInboundEvent",
     "FhirSyncLog",
     "ImagingStudy",
+    "InteropClient",
+    "InteropNonce",
+    "InteropTaskOutbox",
+    "OutboundReferral",
+    "PartnerDiagnosticReport",
     "Location",
     "Notification",
     "Observation",

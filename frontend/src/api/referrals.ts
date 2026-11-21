@@ -31,6 +31,49 @@ export interface Specialist {
   organizacion: string | null;
 }
 
+// A referral sent to an external institution (R30) and the answer of that partner.
+export type ExternalReferralState =
+  | "enviando"
+  | "enviada"
+  | "error_envio"
+  | "aceptada"
+  | "rechazada"
+  | "rechazada_por_validacion";
+
+export type ExternalPriority = "rutina" | "urgente" | "inmediata";
+
+export interface ExternalReferral {
+  id: string;
+  paciente_id: string;
+  cliente_interop_id: string;
+  solicitud_id: string;
+  estado: ExternalReferralState;
+  motivo: string;
+  servicio: string;
+  prioridad: ExternalPriority;
+  resumen_respuesta: string | null;
+  creada_en: string;
+}
+
+export interface ExternalDestination {
+  client_id: string;
+  nombre: string;
+}
+
+export const externalReferralsApi = {
+  destinations: (signal?: AbortSignal) =>
+    api<ExternalDestination[]>("/interop/destinos", { signal }),
+  list: (signal?: AbortSignal) =>
+    api<ExternalReferral[]>("/interop/remisiones", { signal }),
+  create: (body: {
+    paciente_id: string;
+    cliente_interop_id: string;
+    motivo: string;
+    servicio: string;
+    prioridad: ExternalPriority;
+  }) => api<ExternalReferral>("/interop/remisiones", { method: "POST", body }),
+};
+
 export const referralsApi = {
   // The API picks the side by role: recibidas for the especialista, enviadas
   // for the medico, everything for the admin.

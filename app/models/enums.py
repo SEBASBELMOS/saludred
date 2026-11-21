@@ -187,6 +187,10 @@ class AuditAction(str, Enum):
     REFERRAL_ACCEPTED = "REFERRAL_ACCEPTED"
     REFERRAL_REJECTED = "REFERRAL_REJECTED"
     REFERRAL_COMPLETED = "REFERRAL_COMPLETED"
+    # Consent lifecycle (R32): registration and explicit revocation. The matching
+    # audit_log CHECK is widened by the e2c0a1f3b4d5 migration.
+    CONSENT_CREATED = "CONSENT_CREATED"
+    CONSENT_REVOKED = "CONSENT_REVOKED"
     INVOICE_CREATED = "INVOICE_CREATED"
     INVOICE_PAID = "INVOICE_PAID"
     INVOICE_VOIDED = "INVOICE_VOIDED"
@@ -202,6 +206,18 @@ class AuditAction(str, Enum):
     RAG_QUERY = "RAG_QUERY"
     RAG_SUGGESTION_APPROVED = "RAG_SUGGESTION_APPROVED"
     RAG_SUGGESTION_REJECTED = "RAG_SUGGESTION_REJECTED"
+    AGENT_CHAT = "AGENT_CHAT"
+    AGENT_TOOL = "AGENT_TOOL"
+    AGENT_DECISION = "AGENT_DECISION"
+    # Security events of the agent, and the actions later phases (perimeter,
+    # interoperability, patient reconciliation, chained audit) will write.
+    AGENT_SECURITY_EVENT = "AGENT_SECURITY_EVENT"
+    IP_BLOCKED = "IP_BLOCKED"
+    INTEROP_RECEIVED = "INTEROP_RECEIVED"
+    INTEROP_REJECTED = "INTEROP_REJECTED"
+    INTEROP_SENT = "INTEROP_SENT"
+    PATIENT_RECONCILED = "PATIENT_RECONCILED"
+    AUDIT_CHAIN_VERIFIED = "AUDIT_CHAIN_VERIFIED"
 
 
 class CleaningIsolation(str, Enum):
@@ -302,6 +318,20 @@ class ReferralStatus(str, Enum):
     ACCEPTED = "aceptada"
     COMPLETED = "completada"
     REJECTED = "rechazada"
+
+
+class ConsentStatus(str, Enum):
+    """Public status of a consent (R32), values of the Spanish contract.
+
+    NEVER stored: it is derived from ``valid_from``/``valid_until``/``revoked_at``
+    when serialized, so the stored facts and the reported status cannot disagree
+    (single-fact rule). An ``expirada`` row stays readable for the audit trail.
+    """
+
+    ACTIVE = "activa"
+    REVOKED = "revocada"
+    EXPIRED = "expirada"
+    SCHEDULED = "programada"  # the window has not started yet
 
 
 class AlertKind(str, Enum):

@@ -51,7 +51,8 @@ class ReferralRead(BaseModel):
     paciente_nombre: str
     motivo: str
     estado: ReferralStatus
-    remitente_id: uuid.UUID
+    # None when the referral came from a partner system (interoperability).
+    remitente_id: uuid.UUID | None
     remitente_nombre: str
     especialista_id: uuid.UUID
     especialista_nombre: str

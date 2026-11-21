@@ -20,11 +20,35 @@ def _load(prefix: str):  # noqa: ANN202
 
 def test_audit_check_lists_every_action_of_the_enum() -> None:
     module = _load("c9e4a6b2d503")
-    assert set(module.AUDIT_ACTIONS) == {a.value for a in AuditAction}
+    # The head migration (clinical agent) widens the CHECK further; this one is a subset.
+    assert set(module.AUDIT_ACTIONS) <= {a.value for a in AuditAction}
     assert len(module.AUDIT_ACTIONS) == len(set(module.AUDIT_ACTIONS))
     assert set(module.AUDIT_ACTIONS) - set(module.PREVIOUS_AUDIT_ACTIONS) == {
         "RAG_QUERY", "RAG_SUGGESTION_APPROVED", "RAG_SUGGESTION_REJECTED",
     }
+
+
+def test_agent_migration_adds_its_three_actions() -> None:
+    module = _load("d3a8f2c91b47")
+    # The head migration (agent hardening) widens the CHECK further; this one is a subset.
+    assert set(module.AUDIT_ACTIONS) <= {a.value for a in AuditAction}
+    assert set(module.AUDIT_ACTIONS) - set(module.PREVIOUS_AUDIT_ACTIONS) == {
+        "AGENT_CHAT", "AGENT_TOOL", "AGENT_DECISION",
+    }
+    assert module.down_revision == "c9e4a6b2d503"
+
+
+def test_head_migration_lists_every_action_of_the_enum() -> None:
+    # e2c0a1f3b4d5 is the current head (consents + consent audit actions); the
+    # agent-hardening revision is now a subset of the enum.
+    module = _load("e2c0a1f3b4d5")
+    assert set(module.AUDIT_ACTIONS) == {a.value for a in AuditAction}
+    assert len(module.AUDIT_ACTIONS) == len(set(module.AUDIT_ACTIONS))
+    assert set(module.AUDIT_ACTIONS) - set(module.PREVIOUS_AUDIT_ACTIONS) == {
+        "CONSENT_CREATED", "CONSENT_REVOKED",
+    }
+    assert set(module.PREVIOUS_AUDIT_ACTIONS) == set(_load("a2f7c4d19b60").AUDIT_ACTIONS)
+    assert module.down_revision == "b7e5d9a3c418"
 
 
 def test_enum_checks_match_the_models() -> None:

@@ -507,8 +507,14 @@ def sync_referral(
     """
 
     patient = db.get(Patient, referral.patient_id)
-    requester = db.get(User, referral.referring_user_id)
     performer = db.get(User, referral.specialist_user_id)
+    if referral.referring_user_id is None:
+        # Arrived from a partner system: there is no local requester to name.
+        requester_name = f"Sistema externo: {referral.origen_externo or 'desconocido'}"
+        requester = performer
+    else:
+        requester = db.get(User, referral.referring_user_id)
+        requester_name = requester.full_name if requester is not None else ""
     if patient is None or requester is None or performer is None:
         raise NotFoundError("La remision no tiene paciente o clinicos validos")
     patient_record = _reuse_or_sync(
@@ -519,7 +525,7 @@ def sync_referral(
         referral,
         identifier_system=settings.fhir_identifier_system,
         patient_ref=f"Patient/{patient_record.fhir_resource_id}",
-        requester_name=requester.full_name,
+        requester_name=requester_name,
         performer_name=performer.full_name,
     )
     record = _push(

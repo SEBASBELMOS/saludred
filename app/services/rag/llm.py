@@ -53,6 +53,7 @@ class GroqClient:
     asked for; a model that answers 400 to one of them is retried without it and
     the client remembers, so the next call does not fail again. On HTTP 429 it
     waits the ``retry-after`` header, or 2, 4, 8, 16, 32 s, up to ``max_retries``.
+    A request that hangs past ``timeout`` is sent again, up to ``timeout_retries``.
     """
 
     def __init__(
@@ -64,6 +65,7 @@ class GroqClient:
         max_tokens: int = 600,
         *,
         max_retries: int = 0,
+        timeout_retries: int = 0,
         reasoning_effort: str | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -73,6 +75,7 @@ class GroqClient:
         self._url = base_url.rstrip("/") + "/chat/completions"
         self._timeout = timeout
         self._max_retries = max_retries
+        self._timeout_retries = timeout_retries
         self._reasoning_effort = reasoning_effort
         self._sleep = sleep
         self._unsupported: set[str] = set()
@@ -137,12 +140,20 @@ class GroqClient:
         return _OPEN_THINK.sub("", _THINK.sub("", content)).strip()
 
     def _post(self, body: dict[str, object]) -> httpx.Response:
-        return httpx.post(
-            self._url,
-            headers={"Authorization": f"Bearer {self._api_key}"},
-            json=body,
-            timeout=self._timeout,
-        )
+        attempt = 0
+        while True:
+            try:
+                return httpx.post(
+                    self._url,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json=body,
+                    timeout=self._timeout,
+                )
+            except httpx.TimeoutException:
+                if attempt >= self._timeout_retries:
+                    raise
+                attempt += 1
+                logger.warning("LLM call timed out; retry %s of %s", attempt, self._timeout_retries)
 
 
 class ThrottledClient:
@@ -175,7 +186,12 @@ _override: LlmClient | None | _Unset = _UNSET
 
 
 def build_client(
-    model: str | None = None, *, max_retries: int = 0, max_tokens: int | None = None
+    model: str | None = None,
+    *,
+    max_retries: int = 0,
+    max_tokens: int | None = None,
+    timeout: float | None = None,
+    timeout_retries: int = 0,
 ) -> GroqClient | None:
     """A Groq client for ``model`` (default: the generator model); ``None`` without a key."""
 
@@ -187,9 +203,10 @@ def build_client(
         str(settings.groq_api_key).strip(),
         chosen,
         settings.groq_base_url,
-        settings.groq_timeout_seconds,
+        timeout or settings.groq_timeout_seconds,
         max_tokens or settings.groq_max_tokens,
         max_retries=max_retries,
+        timeout_retries=timeout_retries,
         reasoning_effort="low" if "gpt-oss" in chosen else None,
     )
 
@@ -197,7 +214,14 @@ def build_client(
 def get_client(*, max_retries: int = 0) -> LlmClient | None:
     if not isinstance(_override, _Unset):
         return _override
-    return build_client(max_retries=max_retries)
+    # Answers normally take about 2 s, and a stalled request rarely stalls twice:
+    # several short attempts beat one long wait. The judge keeps the long timeout.
+    settings = get_settings()
+    return build_client(
+        max_retries=max_retries,
+        timeout=settings.groq_attempt_timeout_seconds,
+        timeout_retries=settings.groq_timeout_retries,
+    )
 
 
 _judge_override: LlmClient | None | _Unset = _UNSET

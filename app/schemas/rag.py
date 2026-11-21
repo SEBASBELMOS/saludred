@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.models.enums import RagAnswerMode, RagSuggestionStatus
 
@@ -26,7 +26,9 @@ class RagAsk(BaseModel):
     )
     base: Literal["general", "triage", "all"] = "all"
     method: Literal["tfidf", "bm25", "dense", "hybrid", "hybrid_mmr"] = "hybrid"
-    k: int = Field(default=3, ge=1, le=10, description="Fragments cited in the prompt")
+    k: int | None = Field(
+        default=None, ge=1, le=10, description="Fragments cited in the prompt (default RAG_DEFAULT_K)"
+    )
 
     @field_validator("question")
     @classmethod
@@ -37,6 +39,9 @@ class RagAsk(BaseModel):
         return value
 
 
+MAX_FRAGMENT_CHARS = 400
+
+
 class RagSource(BaseModel):
     n: int
     chunk_id: str
@@ -44,6 +49,19 @@ class RagSource(BaseModel):
     title: str
     url: str | None
     score: float | None
+    # The passage used (already pseudonymized), cut to MAX_FRAGMENT_CHARS. Optional so
+    # suggestions stored before this field existed still validate.
+    fragmento: str | None = None
+
+    @computed_field(description="Same document identifier as doc_id")  # type: ignore[prop-decorator]
+    @property
+    def documento(self) -> str:
+        return self.doc_id
+
+    @computed_field(description="Same title as title")  # type: ignore[prop-decorator]
+    @property
+    def titulo(self) -> str:
+        return self.title
 
 
 class RagAnswer(BaseModel):
@@ -61,6 +79,17 @@ class RagAnswer(BaseModel):
         description="Why no model answer was produced: llm_not_configured, llm_rate_limited, "
         "llm_timeout or llm_unavailable. Null when the model answered or on abstention",
     )
+
+    # The public Spanish contract (R23): the same data as ``answer`` / ``sources``.
+    @computed_field(description="Same text as answer")  # type: ignore[prop-decorator]
+    @property
+    def respuesta(self) -> str:
+        return self.answer
+
+    @computed_field(description="Same list as sources: document and fragment used")  # type: ignore[prop-decorator]
+    @property
+    def fuentes(self) -> list[RagSource]:
+        return self.sources
 
 
 class RagSuggestionApprove(BaseModel):

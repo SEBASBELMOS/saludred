@@ -7,7 +7,19 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.field_crypto import reject_stored_shape
 from app.models.enums import AdministrativeGender, ClinicalProfile, DocumentType
+
+
+def _not_ciphertext_shaped(value: str | None) -> str | None:
+    """422 for a plaintext identifier shaped like ``v1.<kid>.<nonce>.<cipher>``.
+
+    Stored as "plain text" it would later be read as a ciphertext and poison every
+    read of the patient.
+    """
+
+    reject_stored_shape(value)
+    return value
 
 
 class PatientBase(BaseModel):
@@ -32,7 +44,12 @@ class PatientBase(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("document_number must not be empty")
-        return value
+        return _not_ciphertext_shaped(value)  # type: ignore[return-value]
+
+    @field_validator("phone", "email", "address")
+    @classmethod
+    def identifiers_are_not_ciphertext_shaped(cls, value: str | None) -> str | None:
+        return _not_ciphertext_shaped(value)
 
 
 class PatientCreate(PatientBase):
@@ -65,7 +82,12 @@ class PatientUpdate(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("document_number must not be empty")
-        return value
+        return _not_ciphertext_shaped(value)
+
+    @field_validator("phone", "email", "address")
+    @classmethod
+    def identifiers_are_not_ciphertext_shaped(cls, value: str | None) -> str | None:
+        return _not_ciphertext_shaped(value)
 
 
 class PatientRead(PatientBase):

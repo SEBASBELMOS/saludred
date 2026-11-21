@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<skill name="remision-especialista" description="Procedimiento para decidir y proponer la remisión de un paciente a un especialista de la red (solo el médico remite).">
+  <titulo>Remisión a especialista</titulo>
+  <paso n="1">Llame a `consultar_paciente` para tener los datos actuales del paciente abierto.</paso>
+  <paso n="2">Llame a `buscar_guias` con el hallazgo concreto (por ejemplo "criterios de remisión a especialista por deterioro respiratorio"). Remita solo si una fuente lo respalda.</paso>
+  <paso n="3">Llame a `listar_especialistas` y elija el destinatario entre los que devuelve. Si el médico nombró a un especialista, use ese. Nunca invente un identificador.</paso>
+  <paso n="4">Redacte el motivo así: "&lt;hallazgo&gt; + &lt;criterio de la fuente [n]&gt;". Use solo el seudónimo del paciente, nunca nombre, documento ni teléfono.</paso>
+  <paso n="5">Llame a `proponer_remision` con el `especialista_id` y ese motivo. La remisión NO se crea hasta que el médico la apruebe.</paso>
+  <paso n="6">Si el médico rechaza, no insista: resuma por qué la propuso y pregunte si desea otra conducta.</paso>
+  <nota>Solo el médico general crea remisiones; al especialista no se le ofrecen estas herramientas.</nota>
+</skill>

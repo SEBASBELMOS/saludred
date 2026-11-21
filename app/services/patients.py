@@ -42,7 +42,7 @@ def list_patients(
     if not include_deleted:
         stmt = stmt.where(Patient.deleted_at.is_(None))
     if document_number:
-        stmt = stmt.where(Patient.document_number == document_number)
+        stmt = stmt.where(Patient.document_matches(document_number))
     if name:
         pattern = f"%{name.lower()}%"
         stmt = stmt.where(
@@ -217,7 +217,7 @@ def _exists_with_document(
 ) -> bool:
     stmt = select(Patient.id).where(
         Patient.document_type == document_type,
-        Patient.document_number == document_number,
+        Patient.document_matches(document_number),
         Patient.deleted_at.is_(None),
     )
     if exclude_id is not None:

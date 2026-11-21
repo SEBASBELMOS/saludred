@@ -17,15 +17,89 @@ exported, the same rule as the clinical record.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
+from app.core.config import get_settings
 from app.fhir import mappers
 from app.models.clinical import Encounter, Observation
 from app.models.patient import Patient
 from app.schemas.ai import ClinicalRecordReport
+from app.services.interop.perfil import LOINC, PROFILE
 
 RISK_PROBABILITY = "http://terminology.hl7.org/CodeSystem/risk-probability"
+
+
+def minimal_partner_bundle(
+    patient: Patient,
+    observations: Sequence[Observation],
+    approved_reports: Sequence[dict],
+    *,
+    generated_at: datetime | None = None,
+    service_request: dict[str, Any] | None = None,
+    federated_id: str | None = None,
+    document_identifier: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a partner collection from scoped rows and already-approved reports.
+
+    The caller owns report approval. Reports are resource-agnostic; duplicate
+    identities (or identical resources without an id) are emitted only once.
+    Local patient and encounter references never cross the partner boundary.
+
+    ``service_request`` (R30) is the referral order that travels with the evidence.
+    ``federated_id`` is used only when the patient row has no stored federated id;
+    without either, the Bundle carries no patient identifier at all.
+    ``document_identifier`` (any-partner mode, INTEROP_SEND_DOCUMENT_IDENTIFIER) adds the
+    national document to the Patient ONLY, next to the federated id: a negotiated
+    minimization trade-off for partners that cannot compute the federated id. The subjects
+    of the other resources keep the federated id alone.
+    """
+    value = patient.id_federado or federated_id
+    identifier = (
+        {"system": get_settings().federated_system, "value": value} if value else None
+    )
+    subject = {"identifier": identifier} if identifier else {}
+    minimal_patient: dict[str, Any] = {"resourceType": "Patient"}
+    if identifier:
+        minimal_patient["identifier"] = [identifier]
+        if document_identifier:
+            minimal_patient["identifier"].append(deepcopy(document_identifier))
+    entries = [{"resource": minimal_patient}]
+    if service_request is not None:
+        order = deepcopy(service_request)
+        order["subject"] = deepcopy(subject)
+        entries.append({"resource": order})
+    for observation in observations:
+        if (observation.patient_id != patient.id or observation.deleted_at is not None
+                or observation.code_system != LOINC or observation.code not in PROFILE):
+            continue
+        resource = mappers.observation_to_fhir(
+            observation, identifier_system=get_settings().fhir_identifier_system,
+            patient_ref="", encounter_ref="",
+        )
+        resource.pop("encounter", None)
+        resource["subject"] = deepcopy(subject)
+        entries.append({"resource": resource})
+    seen: set[tuple[str, str]] = set()
+    for report in approved_reports:
+        key = (report["resourceType"], str(report["id"]) if report.get("id")
+               else json.dumps(report, sort_keys=True))
+        if key in seen:
+            continue
+        seen.add(key)
+        resource = deepcopy(report)
+        resource["subject"] = deepcopy(subject)
+        resource.pop("encounter", None)
+        entries.append({"resource": resource})
+    return {
+        "resourceType": "Bundle", "type": "collection",
+        # No ``total``: FHIR invariant bdl-1 allows it only on searchset and history Bundles.
+        "timestamp": (generated_at or datetime.now(timezone.utc)).isoformat(),
+        "entry": entries,
+    }
 
 
 def full_url(resource_id: object) -> str:
@@ -123,6 +197,6 @@ def clinical_bundle(
         "resourceType": "Bundle",
         "type": "collection",
         "timestamp": (generated_at or datetime.now(timezone.utc)).isoformat(),
-        "total": len(entries),
+        # No ``total``: FHIR invariant bdl-1 allows it only on searchset and history Bundles.
         "entry": entries,
     }

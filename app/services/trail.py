@@ -25,6 +25,7 @@ from app.models.base import Base
 from app.models.enums import AuditAction
 from app.models.governance import AuditLog, RecordVersion
 from app.models.identity import User
+from app.services import audit_chain
 
 
 def snapshot_row(entity: Base) -> dict[str, Any]:
@@ -33,11 +34,20 @@ def snapshot_row(entity: Base) -> dict[str, Any]:
     Only mapped columns are captured -- relationships would drag in unrelated
     rows and make the snapshot unbounded. Types that JSON cannot carry are
     stringified; ``Decimal`` keeps its textual form so no precision is lost.
+
+    The values are the STORED ones: for the encrypted identifiers of a patient that
+    is the ciphertext, so history never becomes a second, plain-text copy. The
+    snapshot key is the column name (a leading ``_`` of the Python attribute is
+    dropped: ``_phone`` is saved as ``phone``).
     """
 
     result: dict[str, Any] = {}
     for attr in inspect(entity).mapper.column_attrs:
         value = getattr(entity, attr.key)
+        key = attr.key.lstrip("_")
+        if key != attr.key:
+            result[key] = value
+            continue
         if isinstance(value, (uuid.UUID, datetime, date)):
             result[attr.key] = str(value)
         elif isinstance(value, Decimal):
@@ -91,11 +101,17 @@ def audit(
     entity_id: uuid.UUID | None,
     actor: User | None,
     metadata: dict[str, Any] | None = None,
+    ip_address: str | None = None,
 ) -> AuditLog:
     """Append one audit entry.
 
     ``actor`` is ``None`` only for events that have no authenticated user, such
     as a failed login attempt -- which is precisely an event worth auditing.
+    ``ip_address`` is the caller's address when the entry comes from a request.
+
+    Each entry joins the hash chain (``seq``, ``prev_hash``, ``row_hash``): see
+    ``audit_chain``. On PostgreSQL the call takes an advisory lock that is held until
+    the caller's transaction ends, so keep the transactions that audit short.
     """
 
     entry = AuditLog(
@@ -104,9 +120,11 @@ def audit(
         entity_type=entity_type,
         entity_id=entity_id,
         metadata_json=metadata,
+        ip_address=ip_address[:64] if ip_address else None,
     )
-    db.add(entry)
-    return entry
+    # Takes the chain lock, links the row to the previous one and adds it to the
+    # session (app/services/audit_chain.py).
+    return audit_chain.seal(db, entry)
 
 
 def mark_deleted(entity: Base, actor: User) -> None:

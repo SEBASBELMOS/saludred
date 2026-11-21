@@ -145,3 +145,17 @@ def test_hook_secret_is_required_and_long_enough(monkeypatch) -> None:
             _env_file=None, database_url="postgresql+psycopg://a:b@h/d",
             jwt_secret_key="j" * 20, pseudonym_key="p" * 20,
         )
+
+
+def test_migrations_on_start_can_be_switched_off_and_default_to_on() -> None:
+    """Review finding 1: the shared Neon database must not be migrated by a plain restart."""
+
+    lines = [
+        line.strip()
+        for line in (ROOT / "docker" / "entrypoint.sh").read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    ]
+    guard = next(i for i, line in enumerate(lines) if "RUN_MIGRATIONS:-true" in line)
+    upgrade = next(i for i, line in enumerate(lines) if line == "alembic upgrade head")
+    assert guard < upgrade, "the alembic call must sit behind the RUN_MIGRATIONS guard"
+    assert '"false"' in lines[guard] and lines[guard].startswith("if ")  # default true: only "false" skips
