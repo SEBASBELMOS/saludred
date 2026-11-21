@@ -138,6 +138,97 @@ Neumonía, derrame, edema, consolidación y cardiomegalia son hallazgos ligados 
 
 Kermany et al. (2018), *Labeled Optical Coherence Tomography (OCT) and Chest X-Ray Images for Classification*, Mendeley Data V2, doi 10.17632/rscbjbr9sj.2 (CC BY 4.0), con etiquetas normal/neumonía asignadas por expertos y un split de prueba de solo 78 MB. Se descartó porque son radiografías pediátricas (1 a 5 años): no representan a los pacientes adultos de la red. Queda como respaldo más liviano.
 
+## Corpus
+
+Fuentes declaradas del asistente clínico (RAG, `docs/RAG.md`) y del agente (`docs/AGENTE.md`, herramienta `buscar_guias`). Son 64 documentos en dos carpetas bajo `rag/corpus/`, cada uno en `rag/corpus/<carpeta>/<id>.md`; el índice completo con licencia por documento está en `rag/corpus/general/SOURCES.md` y `rag/corpus/triage/SOURCES.md`. Se cargan con `python -m scripts.rag_ingest` (ver `docs/RAG.md`).
+
+**Para qué se usa.** Es la base documental con la que el asistente y el agente responden preguntas clínicas y de proceso: cada respuesta cita el documento y el fragmento usados (`fuentes` en `POST /api/v1/agente/chat` y `POST /api/v1/rag/ask`: `doc_id`/`documento`, título, `chunk_id` y `fragmento`), y si ninguna fuente respalda la pregunta el sistema lo dice en vez de inventar. La carpeta `triage` responde al problema clínico del equipo (clasificación y criticidad en urgencias); la carpeta `general` responde al marco normativo y de proceso (referencia y contrarreferencia, habilitación, historia clínica, protección de datos, interoperabilidad, gestión de camas y limpieza, ética de la IA). Aparte existe la base `historia`: no es un corpus de documentos, sino las sugerencias de IA **aprobadas** por un clínico para un paciente, seudonimizadas, y solo la ve el paciente al que pertenecen.
+
+Resumen por carpeta:
+
+| Carpeta (base) | Ids | Documentos | Qué cubre |
+|---|---|---|---|
+| `rag/corpus/triage` | T01 a T32 | 32 | Resolución 5596 de 2015 y manual ESI v4 (AHRQ); documentación de MIMIC-IV-ED; estudios sobre Manchester, NEWS2, índice de choque y signos vitales anormales; hipoglucemia, ACV y dolor torácico; ABCDE de la OMS y el CICR |
+| `rag/corpus/general` | G01 a G32 | 32 | Decretos 4747/2007, 780/2016 y 1377/2013; Resoluciones 2335/2023, 1220/2010, 3100/2019, 1995/1999 y 866/2021; Leyes 1751/2015, 1581/2012 y 2015/2020; recursos FHIR; limpieza hospitalaria; ética de la IA (OMS); flujo y ocupación de camas; compartir datos de salud |
+
+### Carpeta `triage`
+
+| Id | Título | Emisor | Fuente |
+|---|---|---|---|
+| T01 | Resolución 5596 de 2015: criterios técnicos para el Sistema de Selección y Clasificación de pacientes en los servicios de urgencias «Triage» (objeto, definición y categorías) | Ministerio de Salud y Protección Social de Colombia | https://normograma.supersalud.gov.co/compilacion/docs/resolucion_minsaludps_5596_2015.htm |
+| T02 | Resolución 5596 de 2015: Triage (responsabilidades de IPS, EPS y personal) | Ministerio de Salud y Protección Social de Colombia | https://normograma.supersalud.gov.co/compilacion/docs/resolucion_minsaludps_5596_2015.htm |
+| T03 | Emergency Severity Index v4, Implementation Handbook, cap. 3 (introducción y punto de decisión A: ¿el paciente se está muriendo?) | AHRQ, US Department of Health and Human Services | https://git.lsit.ucsb.edu/publicdata/ahrq-gov/raw/commit/58222b51ed2ca5fbc109e641d86b5c7039a3725c/archive.ahrq.gov/research/esi/esi3.htm |
+| T04 | ESI v4, cap. 3 (punto de decisión B: ¿el paciente debe esperar?) | AHRQ | misma URL que T03 |
+| T05 | ESI v4, cap. 3 (puntos de decisión C y D: recursos y signos vitales de zona de peligro) | AHRQ | misma URL que T03 |
+| T06 | ESI v4, cap. 5 (necesidades esperadas de recursos) | AHRQ | https://git.lsit.ucsb.edu/publicdata/ahrq-gov/raw/commit/58222b51ed2ca5fbc109e641d86b5c7039a3725c/archive.ahrq.gov/research/esi/esi5.htm |
+| T07 | ESI v4, cap. 6 (papel de los signos vitales en el triage ESI) | AHRQ | https://git.lsit.ucsb.edu/publicdata/ahrq-gov/raw/commit/58222b51ed2ca5fbc109e641d86b5c7039a3725c/archive.ahrq.gov/research/esi/esi6.htm |
+| T08 | Documentación de MIMIC-IV-ED: la tabla `triage` | MIT Laboratory for Computational Physiology / PhysioNet | https://mimic.mit.edu/docs/iv/modules/ed/triage.html |
+| T09 | Documentación de MIMIC-IV-ED: las tablas `vitalsign` y `edstays` | MIT Laboratory for Computational Physiology / PhysioNet | https://mimic.mit.edu/docs/iv/modules/ed/vitalsign.html |
+| T10 | MIMIC-IV-ED v2.2: descripción de la base, valoración de triage y limitaciones | PhysioNet (Johnson et al.) | https://physionet.org/content/mimic-iv-ed/2.2/ |
+| T11 | El triaje en los servicios de urgencias en hospitales de la subregión suroeste de Antioquia (estudio observacional descriptivo) | Iatreia (Universidad de Antioquia), SciELO Colombia | http://www.scielo.org.co/scielo.php?script=sci_arttext&pid=S0121-07932023000200158 |
+| T12 | Propuesta de modelo de predicción de mortalidad complementario al triaje en un hospital universitario en Bogotá | Universitas Medica (Pontificia Universidad Javeriana), SciELO Colombia | http://www.scielo.org.co/scielo.php?pid=S2011-08392021000300004&script=sci_arttext&tlng=es |
+| T13 | Validity of the Manchester Triage System in emergency care: a prospective observational study | PLoS ONE | https://pmc.ncbi.nlm.nih.gov/articles/PMC5289484/ |
+| T14 | Manchester Triage System: effectiveness, limitations, and global implementation (structured narrative review) | Healthcare | https://pmc.ncbi.nlm.nih.gov/articles/PMC13512649/ |
+| T15 | NEWS2 as a prognostic tool for adult patients in the emergency department (retrospective observational study) | PLOS One | https://pmc.ncbi.nlm.nih.gov/articles/PMC12169516/ |
+| T16 | Evaluation of NEWS2 response thresholds in a retrospective observational study from a UK acute hospital | BMJ Open | https://pmc.ncbi.nlm.nih.gov/articles/PMC8830252/ |
+| T17 | NEWS outperforms qSOFA for early detection of sepsis in the emergency department | Antibiotics | https://pmc.ncbi.nlm.nih.gov/articles/PMC9686998/ |
+| T18 | Comparison of nine early warning scores for short-term mortality in acute neurological disease in the emergency department | Journal of Personalized Medicine | https://pmc.ncbi.nlm.nih.gov/articles/PMC9024907/ |
+| T19 | Prognostic value of NEWS and MEWS on ICU readmission and mortality (prospective observational study) | Frontiers in Medicine | https://pmc.ncbi.nlm.nih.gov/articles/PMC9386480/ |
+| T20 | Shock Index as a marker for mortality in patients admitted to the medical ICU from the emergency department | Cureus | https://pmc.ncbi.nlm.nih.gov/articles/PMC7263408/ |
+| T21 | Use of the reverse shock index for identifying high-risk patients in a five-level triage system | Scandinavian Journal of Trauma, Resuscitation and Emergency Medicine | https://pmc.ncbi.nlm.nih.gov/articles/PMC4748603/ |
+| T22 | Predictive and prognostic importance of NEWS2 in emergency room patients | Cureus | https://pmc.ncbi.nlm.nih.gov/articles/PMC11942526/ |
+| T23 | Sepsis (hoja informativa) | Organización Mundial de la Salud | https://www.who.int/news-room/fact-sheets/detail/sepsis |
+| T24 | Abnormal vital signs are strong predictors for ICU admission and in-hospital mortality in adults triaged in the emergency department | Scandinavian Journal of Trauma, Resuscitation and Emergency Medicine | https://pmc.ncbi.nlm.nih.gov/articles/PMC3384463/ |
+| T25 | Triage vital signs predict in-hospital mortality among emergency department patients with acute poisoning | BMC Health Services Research | https://pmc.ncbi.nlm.nih.gov/articles/PMC3459725/ |
+| T26 | Risk scores for patients with chest pain: evaluation in the emergency department | Current Cardiology Reviews | https://pmc.ncbi.nlm.nih.gov/articles/PMC3131711/ |
+| T27 | Diagnostic values of chest pain history, ECG, troponin and clinical gestalt in potential acute coronary syndrome | SpringerPlus | https://pmc.ncbi.nlm.nih.gov/articles/PMC4431985/ |
+| T28 | Low blood glucose (hypoglycemia) | NIDDK, National Institutes of Health | https://www.niddk.nih.gov/health-information/diabetes/overview/preventing-problems/low-blood-glucose-hypoglycemia |
+| T29 | If time is brain, where is the improvement in prehospital time after stroke? | Frontiers in Neurology | https://pmc.ncbi.nlm.nih.gov/articles/PMC5701972/ |
+| T30 | A fast emergency department triage score based on mobility, mental status and oxygen saturation compared with the ESI | QJM: An International Journal of Medicine | https://pmc.ncbi.nlm.nih.gov/articles/PMC10559338/ |
+| T31 | Inter-rater reliability of the Glasgow Coma Scale between triage and resuscitation nurses after standardized training | Journal of Nursing Management | https://pmc.ncbi.nlm.nih.gov/articles/PMC12714156/ |
+| T32 | Basic Emergency Care: approach to the acutely ill and injured (ABCDE y glosario) | OMS y Comité Internacional de la Cruz Roja | https://hlh.who.int/docs/librariesprovider4/hlh-documents/who-icrc-basic-emergency-care.pdf?sfvrsn=4460e22e_5 |
+
+Nota: T03 a T07 son páginas archivadas de AHRQ recuperadas de un espejo público porque el servidor original no resolvía desde la máquina de construcción. Las licencias de T08 a T10 distinguen la documentación (licencia MIT) de los datos (licencia de PhysioNet): solo se usa el texto descriptivo.
+
+### Carpeta `general`
+
+| Id | Título | Emisor | Fuente |
+|---|---|---|---|
+| G01 | Decreto 4747 de 2007: objeto, campo de aplicación y definiciones (referencia y contrarreferencia) | Ministerio de la Protección Social | https://normograma.supersalud.gov.co/compilacion/docs/decreto_4747_2007.htm |
+| G02 | Decreto 4747 de 2007: atención inicial de urgencias, autorizaciones, referencia y CRUE (arts. 12 a 18) | Ministerio de la Protección Social | misma URL que G01 |
+| G03 | Decreto 780 de 2016: atención inicial de urgencias, referencia y contrarreferencia y CRUE (arts. 2.5.3.2.1 a 2.5.3.2.4, 2.5.3.2.16 y 2.5.3.2.17) | Ministerio de Salud y Protección Social | https://www.funcionpublica.gov.co/eva/gestornormativo/norma.php?i=77813 |
+| G04 | Decreto 780 de 2016: atención integral, referencia y contrarreferencia y cambio de prestador (arts. 2.5.3.4.7.3 a 2.5.3.4.7.7) | Ministerio de Salud y Protección Social | misma URL que G03 |
+| G05 | Resolución 2335 de 2023: informe de urgencias, autorizaciones posteriores, referencia y contrarreferencia | Ministerio de Salud y Protección Social | https://normograma.supersalud.gov.co/compilacion/docs/resolucion_minsaludps_2335_2023.htm |
+| G06 | Resolución 1220 de 2010: organización y operación de los CRUE | Ministerio de la Protección Social | https://normograma.supersalud.gov.co/compilacion/docs/resolucion_minproteccion_1220_2010.htm |
+| G07 | Resolución 3100 de 2019: manual de habilitación, servicio de hospitalización | Ministerio de Salud y Protección Social | https://normograma.supersalud.gov.co/compilacion/docs/resolucion_minsaludps_3100_2019.htm |
+| G08 | Resolución 3100 de 2019: manual de habilitación, servicio de urgencias | Ministerio de Salud y Protección Social | misma URL que G07 |
+| G09 | Ley Estatutaria 1751 de 2015: objeto, naturaleza del derecho fundamental a la salud, elementos y principios (arts. 1, 2 y 6) | Congreso de la República de Colombia | https://www.funcionpublica.gov.co/eva/gestornormativo/norma.php?i=60733 |
+| G10 | Ley Estatutaria 1751 de 2015: integralidad, redes de servicios y prohibición de negar servicios (arts. 8, 13 y 14) | Congreso de la República de Colombia | misma URL que G09 |
+| G11 | Ley 1581 de 2012: protección de datos personales, objeto, ámbito y definiciones | Congreso de la República de Colombia | https://www.funcionpublica.gov.co/eva/gestornormativo/norma.php?i=49981 |
+| G12 | Ley 1581 de 2012: principios del tratamiento y datos sensibles (arts. 4 a 7) | Congreso de la República de Colombia | misma URL que G11 |
+| G13 | Ley 1581 de 2012: derechos de los titulares, autorización y suministro de información (arts. 8 a 13) | Congreso de la República de Colombia | misma URL que G11 |
+| G14 | Decreto 1377 de 2013: definiciones, autorización y revocatoria en el tratamiento de datos personales | Presidencia de la República de Colombia | https://www.funcionpublica.gov.co/eva/gestornormativo/norma.php?i=53646 |
+| G15 | Resolución 1995 de 1999: manejo de la historia clínica (definiciones, características y obligatoriedad del registro) | Ministerio de Salud | https://normograma.supersalud.gov.co/compilacion/docs/resolucion_minsalud_r1995_99.htm |
+| G16 | Resolución 1995 de 1999: custodia, acceso y seguridad del archivo de historias clínicas | Ministerio de Salud | misma URL que G15 |
+| G17 | Ley 2015 de 2020: interoperabilidad de la historia clínica electrónica (objeto, definiciones y ámbito) | Congreso de la República de Colombia | https://www.funcionpublica.gov.co/eva/gestornormativo/norma.php?i=105472 |
+| G18 | Ley 2015 de 2020: guarda y custodia, titularidad, autorización a terceros, contenido, gratuidad y autenticidad de la historia clínica electrónica | Congreso de la República de Colombia | misma URL que G17 |
+| G19 | Resolución 866 de 2021: conjunto de elementos de datos clínicos relevantes para la interoperabilidad | Ministerio de Salud y Protección Social | https://normograma.supersalud.gov.co/compilacion/docs/resolucion_minsaludps_0866_2021.htm |
+| G20 | Resolución 866 de 2021: titularidad, privacidad desde el diseño, seguridad y calidad del dato clínico interoperable | Ministerio de Salud y Protección Social | misma URL que G19 |
+| G21 | Patient, FHIR v5.0.0 | HL7 International | https://hl7.org/fhir/patient.html |
+| G22 | Encounter, FHIR v5.0.0 | HL7 International | https://hl7.org/fhir/encounter.html |
+| G23 | Location, FHIR v5.0.0 | HL7 International | https://hl7.org/fhir/location.html |
+| G24 | Instructivo de acciones de limpieza y desinfección en instituciones de salud (personal de servicios generales) | Ministerio de Salud y Protección Social con la OPS | https://www.minsalud.gov.co/sites/rid/Lists/BibliotecaDigital/RIDE/VS/PP/ET/instructivo-limpieza-hospitalaria-ops.pdf |
+| G25 | Ethics and governance of artificial intelligence for health: WHO guidance, resumen ejecutivo (principios éticos) | Organización Mundial de la Salud | https://www.who.int/publications/i/item/9789240029200 |
+| G26 | Ethics and governance of artificial intelligence for health: WHO guidance, responsabilidad y decisiones autónomas | Organización Mundial de la Salud | misma URL que G25 |
+| G27 | Is bed turnover rate a good metric for hospital scale efficiency? (Southeast Nigeria) | Cost Effectiveness and Resource Allocation | https://pmc.ncbi.nlm.nih.gov/articles/PMC7329453/ |
+| G28 | Delay in discharge and its impact on unnecessary hospital bed occupancy | BMC Health Services Research | https://pmc.ncbi.nlm.nih.gov/articles/PMC3511236/ |
+| G29 | Reducing delays, improving flow: the importance of a dedicated discharge coordinator | Cureus | https://pmc.ncbi.nlm.nih.gov/articles/PMC12166983/ |
+| G30 | Association between boarding in the emergency department and in-hospital mortality (revisión sistemática) | PLoS ONE | https://pmc.ncbi.nlm.nih.gov/articles/PMC7159217/ |
+| G31 | Dry-fogged hydrogen peroxide as an untact room disinfection automation system for terminal decontamination of an isolation room | Antimicrobial Resistance and Infection Control | https://pmc.ncbi.nlm.nih.gov/articles/PMC12296622/ |
+| G32 | Anonymization, accountability, and access: legal dimensions of health data sharing in federated networks | Frontiers in Digital Health | https://pmc.ncbi.nlm.nih.gov/articles/PMC13044123/ |
+
+Las licencias de los 64 documentos (normas públicas de Colombia, dominio público de EE. UU., CC BY, CC0 de HL7 y CC BY-NC-SA 3.0 IGO de la OMS) están en las columnas `license` de los dos `SOURCES.md`. El corpus no contiene datos de pacientes; lo que se sabe de un paciente solo entra por el flujo de aprobación clínica (base `historia`).
+
 ## Limitaciones
 
 - **Tamaño de la base real.** 222 estancias de 64 pacientes es poco. Con esa base, el aumento no crea información nueva: interpola entre filas reales. Las métricas de un modelo deben calcularse con validación cruzada o sobre las filas reales, y nunca con filas sintéticas en el conjunto de prueba.

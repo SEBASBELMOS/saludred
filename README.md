@@ -15,16 +15,18 @@ conjuntos públicos con licencia abierta ([`docs/DATASETS.md`](docs/DATASETS.md)
 2. [Arquitectura](#arquitectura)
 3. [Diagrama de servicios](#diagrama-de-servicios)
 4. [Diagrama de eventos](#diagrama-de-eventos)
-5. [Stack](#stack)
-6. [Mapa de requisitos R01–R22](#mapa-de-requisitos-r01r22)
-7. [Puesta en marcha y despliegue](#puesta-en-marcha-y-despliegue)
-8. [Pruebas](#pruebas)
-9. [Autenticación, roles y usuarios de prueba](#autenticación-roles-y-usuarios-de-prueba)
-10. [Modelo de datos](#modelo-de-datos)
-11. [Datos y licencias](#datos-y-licencias)
-12. [Documentación](#documentación)
-13. [Seguridad](#seguridad)
-14. [Estado y limitaciones](#estado-y-limitaciones)
+5. [Diagrama del intercambio con el socio](#diagrama-del-intercambio-con-el-socio)
+6. [Stack](#stack)
+7. [Mapa de requisitos R01–R34](#mapa-de-requisitos-r01r34)
+8. [Mapa de requisitos a leyes R23–R33](#mapa-de-requisitos-a-leyes-r23r33)
+9. [Puesta en marcha y despliegue](#puesta-en-marcha-y-despliegue)
+10. [Pruebas](#pruebas)
+11. [Autenticación, roles y usuarios de prueba](#autenticación-roles-y-usuarios-de-prueba)
+12. [Modelo de datos](#modelo-de-datos)
+13. [Datos y licencias](#datos-y-licencias)
+14. [Documentación](#documentación)
+15. [Seguridad](#seguridad)
+16. [Estado y limitaciones](#estado-y-limitaciones)
 
 ## El problema
 
@@ -69,6 +71,19 @@ EPS
 | `tunnel-web`, `tunnel-api`, `tunnel-fhir` | Túneles rápidos de Cloudflare (`cloudflared`, arrancan con el mismo `up -d`) que publican la interfaz, la API y el servidor FHIR con URL HTTPS. | Conexión saliente |
 | `orthanc` | Servidor PACS con los píxeles de las imágenes. El navegador nunca le habla: toda imagen pasa por la API. | `127.0.0.1:8042` |
 
+Dentro del servicio `api` conviven, como módulos del mismo proceso, las piezas de la entrega final:
+
+| Pieza | Qué hace | Código | Documento |
+|---|---|---|---|
+| Agente clínico | Agente de LangChain y LangGraph (`/api/v1/agente/*`) con herramientas por rol, aprobación humana para remitir y defensa contra inyección. La IPS y el paciente salen de la sesión, no del texto | `app/services/agent/`, `app/api/routes/agent.py` | [`docs/AGENTE.md`](docs/AGENTE.md) |
+| RAG | Recuperación híbrida (BM25, vectores con pgvector, RRF y MMR) sobre las guías declaradas en `## Corpus`; cada respuesta cita documento y fragmento y, sin evidencia, se abstiene (`/api/v1/rag/*`) | `app/services/rag/`, `app/api/routes/rag.py` | [`docs/RAG.md`](docs/RAG.md), [`docs/DATASETS.md`](docs/DATASETS.md) |
+| Proveedor de LLM | Groq, solo con texto seudonimizado; si no responde, el agente y el RAG degradan a búsqueda extractiva en las guías. Es un servicio externo | `app/services/rag/llm.py`, `app/services/agent/model.py` | [`docs/AGENTE.md`](docs/AGENTE.md) |
+| Interoperabilidad con socios | Rutas en la raíz (`/oauth/token`, `/interop/*`) con token de sistema y firma por mensaje; remisión de ida y vuelta por `Bundle` y `Task` | `app/services/interop/`, `app/api/routes/interop.py` | [`docs/INTEROP.md`](docs/INTEROP.md) |
+| Consentimientos | Consentimiento del paciente por destino, con vigencia y revocación; sin él no se remite a un socio (`/api/v1/consents`) | `app/services/consents.py`, `app/api/routes/consents.py` | [`docs/NORMATIVA.md`](docs/NORMATIVA.md) |
+| Auditoría encadenada | Cada fila de `audit_log` guarda el hash de la anterior; verificación solo admin (`/api/v1/audit-logs/verify`) | `app/services/audit_chain.py`, `app/api/routes/audit.py` | [`docs/NORMATIVA.md`](docs/NORMATIVA.md) |
+
+El modelo de amenazas con sus fronteras de confianza está en [`docs/STRIDE.md`](docs/STRIDE.md).
+
 Decisiones que conviene conocer:
 
 - **Dos bases, dos ciclos de vida.** La aplicación es dueña del modelo operativo; HAPI es dueño de la
@@ -86,6 +101,8 @@ Decisiones que conviene conocer:
 flowchart LR
     U["Navegador<br/>(médico, especialista, contable, admin, paciente)"]
     P["Postman, laboratorio<br/>o sistema externo"]
+    SOC["Sistema socio<br/>(otro equipo)"]
+    LLM["Groq<br/>proveedor de LLM"]
 
     subgraph PUB["Cloudflare - cloudflared"]
         TW["tunnel-web"]
@@ -95,8 +112,14 @@ flowchart LR
 
     subgraph NET["Red interna de Docker"]
         WEB["web<br/>nginx + SPA React"]
-        API["api<br/>FastAPI, un solo proceso"]
-        ML["ml<br/>modelos de IA"]
+        subgraph APIG["api: un solo proceso"]
+            API["FastAPI<br/>JWT, roles, bus de eventos"]
+            AG["Agente y RAG<br/>herramientas por rol"]
+            INT["Interoperabilidad<br/>/oauth/token y /interop/*"]
+            CON["Consentimientos"]
+            AUD["Auditoría encadenada<br/>hash por fila"]
+        end
+        ML["ml<br/>modelos de IA y embeddings"]
         MONGO[("mongo<br/>facturas")]
         HAPI["hapi<br/>HAPI FHIR R4"]
         ORT["orthanc<br/>PACS"]
@@ -115,10 +138,26 @@ flowchart LR
     API -->|HTTP interno| ML
     API --> MONGO
     API -->|"sincronización R15"| HAPI
-    HAPI -->|"rest-hook Observation (R21)"| API
+    HAPI -->|"rest-hook Observation (R21), con secreto (R29)"| API
     HAPI --> PGH
     API -->|"imágenes"| ORT
+
+    API --> AG
+    API --> INT
+    API --> CON
+    API --> AUD
+    AG -->|"texto seudonimizado (R12)"| LLM
+    AG -->|"embeddings"| ML
+    AG -->|"fragmentos, memoria, auditoría"| PGA
+    INT -->|"consentimiento (R32)"| CON
+    AUD --> PGA
+    SOC <-->|"HTTPS: token de sistema y firma (R29, R31)<br/>/interop/Bundle, /interop/Task"| TA
+    TA --> INT
 ```
+
+Las rutas `/oauth/token` y `/interop/*` entran por `tunnel-api` y no pasan por el nginx del contenedor `web`. El
+agente y el RAG envían al LLM solo texto seudonimizado; si el proveedor no responde, degradan a una búsqueda
+extractiva en las guías. El diagrama del intercambio con el socio, mensaje a mensaje, está más abajo.
 
 ## Diagrama de eventos
 
@@ -138,6 +177,7 @@ sequenceDiagram
     participant E as Especialista
     participant H as HAPI FHIR
     participant EXT as Postman o laboratorio
+    participant SOC as Sistema socio
 
     rect rgb(235, 245, 255)
     Note over M,BUS: 1. Análisis, alerta crítica y reconocimiento
@@ -181,10 +221,79 @@ sequenceDiagram
     API->>BUS: fhir_observacion
     BUS-->>M: aviso en vivo y auditoría con origen FHIR
     end
+
+    rect rgb(255, 240, 240)
+    Note over SOC,E: 5. Eventos externos (R19): el detalle está en el diagrama del socio
+    SOC->>API: POST /interop/Bundle (remisión recibida)
+    API->>BUS: remision_creada con origen_externo
+    BUS-->>E: aviso en vivo al especialista
+    SOC->>API: POST /interop/Task (respuesta del socio)
+    API->>BUS: respuesta_socio
+    BUS-->>M: aviso en vivo al médico remitente
+    Note over API,BUS: un rechazo por validación solo queda en la auditoría y en el estado de la remisión, sin aviso en vivo
+    end
 ```
 
 HAPI 7.4 entrega las suscripciones con una tarea programada de 5 s, así que el paso 4 tarda entre 5 y 9 s;
-los demás flujos llegan en 2 a 5 s.
+los demás flujos llegan en 2 a 5 s. Toda fila de auditoría de estos flujos entra a la cadena de hashes.
+
+## Diagrama del intercambio con el socio
+
+SaludRed hace de **A** cuando envía una remisión y de **B** cuando la recibe; el mismo código cumple los dos
+papeles. El flujo, sus códigos de error y el control de consentimiento (R30 a R32) están descritos con detalle en
+[`docs/INTEROP.md`](docs/INTEROP.md). Estado: probado en autobucle (SaludRed como su propio socio); la demostración
+con otro equipo (R33) espera a que se asigne la pareja.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant M as Médico de A
+    participant A as SaludRed A
+    participant B as Sistema B
+    participant E as Especialista de B
+
+    M->>A: POST /api/v1/interop/remisiones
+    A->>A: rol y alcance del paciente
+    alt sin consentimiento vigente para B (R32)
+        A-->>M: 403, auditoría INTEROP_REJECTED; no se arma ni se envía nada
+    else consentimiento vigente
+        A->>A: Bundle mínimo: Patient solo con id federado, ServiceRequest, Observation del perfil, DiagnosticReport de IA aprobada
+        A->>A: guarda la remisión como "enviando" antes del transporte
+        A->>B: POST /oauth/token (client credentials)
+        B-->>A: token de sistema de 10 minutos
+        A->>B: POST /interop/Bundle (token, firma HMAC, nonce)
+        B->>B: valida token, firma y perfil de TODO el Bundle antes de escribir
+        alt no autenticado, sin alcance o repetido
+            B-->>A: 401 firma o token (A renueva el token una vez y reintenta) / 403 sin alcance / 409 repetido, con OperationOutcome
+            A-->>M: remisión en "error_envio"; el endpoint responde 502
+        else no cumple el perfil
+            B-->>A: 400 o 422 con OperationOutcome; B no guarda nada
+            A-->>M: 201 con estado "rechazada_por_validacion" (sin aviso en vivo)
+        else paciente o especialista sin resolver
+            B-->>A: 202, el mensaje queda en la cola de conciliación del admin de B
+            A-->>M: 201 con estado "enviada"
+        else válido
+            B->>B: una sola transacción: remisión, observaciones, informes, auditoría con origen externo
+            B-->>A: 201 con OperationOutcome
+            A-->>M: 201 con estado "enviada"
+            B-->>E: remision_creada en vivo (bandeja y contador)
+            E->>B: aceptar o rechazar la remisión (con motivo)
+            B->>B: commit y Task en la bandeja de salida
+            B->>A: POST /interop/Task (accepted o rejected, con motivo)
+            alt Task válida y de un socio autorizado
+                A->>A: actualiza la remisión enviada; auditoría con origen externo
+                A-->>M: respuesta_socio en vivo
+            else Task repetida
+                A-->>B: 200, sin evento nuevo (idempotente)
+            else remisión de otro socio o desconocida / respuesta contraria / Task inválida
+                A-->>B: 404 / 409 / 422 con OperationOutcome
+            end
+        end
+    end
+```
+
+Si la `Task` no llega al socio, la decisión del especialista no se revierte: queda en la bandeja de salida y el
+administrador la reenvía con `POST /api/v1/interop/outbox/reintentar`.
 
 ## Stack
 
@@ -193,17 +302,19 @@ los demás flujos llegan en 2 a 5 s.
 | Base de datos | PostgreSQL (16 en contenedor, Neon en despliegue) |
 | API | Python 3.12 · FastAPI · SQLAlchemy 2 · Pydantic v2 |
 | Migraciones | Alembic |
-| Autenticación | JWT (HS256) · hashing bcrypt |
+| Autenticación | JWT (HS256, 15 min, `iss`/`aud`) · hashing Argon2id (`pwdlib`) |
 | Interoperabilidad | HAPI FHIR R4 (v7.4.0) |
 | Imágenes médicas | Orthanc (PACS DICOM) |
 | Contabilidad | MongoDB 7 · pymongo |
 | Inteligencia artificial | Servicio `ml` (FastAPI · scikit-learn, regresión logística) |
+| Agente y RAG | LangChain 1.4 y LangGraph · Groq como proveedor de LLM · recuperación híbrida (BM25, vectores con pgvector, RRF y MMR) |
+| Intercambio con otros equipos | FHIR R4 (`Bundle`, `Task`, `ServiceRequest`, `Observation`, `DiagnosticReport`) · OAuth 2.0 client credentials · firma HMAC-SHA256 por mensaje |
 | Tiempo real | WebSocket (público) y Server-Sent Events (red local) |
 | Interfaz | React 18 · TypeScript · Vite · PrimeReact sin estilos · Tailwind 3.4 · TanStack Query |
 | Servidor web | nginx |
 | Documentación de API | OpenAPI/Swagger generado por FastAPI (`/docs`) |
 
-## Mapa de requisitos R01–R22
+## Mapa de requisitos R01–R34
 
 | Requisito | Dónde está implementado | Documento |
 |---|---|---|
@@ -230,8 +341,46 @@ los demás flujos llegan en 2 a 5 s.
 | R21 Interoperabilidad reactiva | `app/api/routes/fhir_hooks.py`, `app/services/fhir_inbound.py`, `scripts/ensure_fhir_subscription.py` | [`docs/EVENTOS.md`](docs/EVENTOS.md) |
 | R22 Documentación y sustentación | `docs/`, `tester.yaml` | [`docs/NORMATIVA.md`](docs/NORMATIVA.md), [`docs/IA.md`](docs/IA.md) |
 | Extra: asistente clínico con RAG | `app/services/rag/`, `app/services/rag_suggestions.py`, `app/api/routes/rag.py`, `scripts/rag_ingest.py`, `scripts/rag_eval.py` | [`docs/RAG.md`](docs/RAG.md) |
+| R23 Agente RAG con fuentes citadas | `app/services/agent/`, `app/services/rag/`, `app/api/routes/agent.py`, `app/api/routes/rag.py` | [`docs/AGENTE.md`](docs/AGENTE.md), [`docs/RAG.md`](docs/RAG.md), [`docs/DATASETS.md`](docs/DATASETS.md) (`## Corpus`) |
+| R24 Herramientas con permisos por rol | `app/services/agent/tools.py`, `context.py`, `harness.py` | [`docs/AGENTE.md`](docs/AGENTE.md) |
+| R25 Defensa contra prompt injection | `app/services/agent/guard.py`, `security.py` | [`docs/AGENTE.md`](docs/AGENTE.md) |
+| R26 Modelo de amenazas STRIDE | `docs/STRIDE.md` | [`docs/STRIDE.md`](docs/STRIDE.md) |
+| R27 Cifrado de campos (código; relleno de filas existentes pendiente, D1) | `app/core/field_crypto.py`, `app/models/patient.py`, `scripts/cifrar_pacientes.py` | [`docs/NORMATIVA.md`](docs/NORMATIVA.md), [`docs/ENTREGA_FINAL.md`](docs/ENTREGA_FINAL.md) |
+| R28 Auditoría encadenada | `app/services/audit_chain.py`, `app/api/routes/audit.py` | [`docs/NORMATIVA.md`](docs/NORMATIVA.md) |
+| R29 Entradas externas autenticadas | `app/api/routes/fhir_hooks.py`, `app/services/interop/receptor.py`, `firma.py`, `perfil.py` | [`docs/INTEROP.md`](docs/INTEROP.md) |
+| R30 Remisión de ida y vuelta por Bundle (autobucle) | `app/services/interop/roundtrip.py`, `envio.py`, `app/api/routes/interop.py` | [`docs/INTEROP.md`](docs/INTEROP.md), [`docs/EVENTOS.md`](docs/EVENTOS.md) |
+| R31 Credenciales de sistema solo para entrada | `app/services/interop/clientes.py`, `app/api/routes/interop.py` | [`docs/INTEROP.md`](docs/INTEROP.md) |
+| R32 Consentimiento por destino y Bundle mínimo | `app/services/consents.py`, `app/api/routes/consents.py`, `app/services/interop/envio.py` | [`docs/NORMATIVA.md`](docs/NORMATIVA.md) |
+| R33 Demostración cruzada en vivo | Pendiente del socio; `scripts/probar_sistema.py` para la autoprueba | [`docs/INTEROP.md`](docs/INTEROP.md), [`docs/ENTREGA_FINAL.md`](docs/ENTREGA_FINAL.md) |
+| R34 Documentación y sustentación | este README, `docs/`, `tester.yaml` | [`docs/ENTREGA_FINAL.md`](docs/ENTREGA_FINAL.md) |
 
 El contrato de verificación automática está en [`tester.yaml`](tester.yaml).
+
+## Mapa de requisitos a leyes R23–R33
+
+Cada fila lleva el requisito, el control, la evidencia (archivo o prueba) y la norma. El detalle completo, con más
+pruebas por fila y los límites de cada control, está en [`docs/NORMATIVA.md`](docs/NORMATIVA.md). Las citas de
+artículo se tomaron del enunciado y de las diapositivas; las marcadas allí «según la diap. 22» no se contrastaron con
+el texto oficial. No es una declaración de conformidad jurídica.
+
+| Requisito | Control | Evidencia | Norma |
+|---|---|---|---|
+| R23 Agente RAG con fuentes | Respuesta con `respuesta` y `fuentes` (documento, fragmento, `chunk_id`); abstención sin soporte | `app/services/agent/`, `app/services/rag/`; `tests/test_agent_rag_audit.py::test_without_support_the_agent_says_so_and_does_not_invent` | Res. 1995/1999 (solo lo firmado entra a la historia); Ley 1581/2012, art. 4 lit. b |
+| R24 Herramientas por rol y auditoría | El paciente sale de la sesión, no de un argumento; contable y paciente reciben 403; `AGENT_TOOL` guarda el resultado seudonimizado | `app/services/agent/tools.py`; `tests/test_agent.py::test_no_tool_takes_a_patient_argument`; `tests/test_agent_rag_audit.py::test_an_accountant_gets_403_on_every_agent_and_rag_endpoint` | Ley 1581/2012, art. 4 lit. f y g; Res. 1995/1999 |
+| R12 ampliado: el LLM sin identificadores | Limpieza de nombre, documento, correo, teléfono y dirección antes del modelo y de auditar | `app/services/rag/privacy.py`; `tests/test_agent_rag_audit.py::test_the_rag_prompt_never_holds_name_document_email_phone_or_address` | Ley 1581/2012, art. 4 lit. b y f |
+| R25 Prompt injection | Datos no confiables delimitados, detector, política en código, aprobación humana y bloqueo temporal con IP auditada | `app/services/agent/guard.py`; `tests/test_agent.py::test_repeated_injection_blocks_the_ip_for_a_while_and_audits_it` | Ley 1581/2012, art. 4 lit. g; Ley 1273/2009* |
+| R26 STRIDE | DFD con fronteras y una fila por categoría | `docs/STRIDE.md` | Ley 1581/2012; Res. 1995/1999; Res. 866/2021; Res. 3100/2019 |
+| R27 Cifrado de campos | AES-256-GCM con datos asociados e índice ciego; filas existentes pendientes (D1) | `app/core/field_crypto.py`; `tests/test_field_crypto.py::test_decrypting_as_another_patient_fails` | Ley 1581/2012, arts. 5 y 6* |
+| R28 Auditoría encadenada | Hash de la fila anterior; verificación solo admin | `app/services/audit_chain.py`; `tests/test_audit_chain.py::test_deleting_a_row_from_the_middle_is_detected` | Res. 1995/1999*; Ley 1581/2012, art. 17 |
+| R29 Entradas externas autenticadas | Secreto del hook, token de sistema, firma HMAC con nonce y perfil; 401, 403, 409, 422 | `tests/test_fhir_hook.py::test_hook_rejects_missing_or_wrong_secret`; `tests/test_interop_receiver.py::test_the_same_message_twice_is_409_the_second_time` | Ley 1581/2012, art. 4 lit. g; Res. 866/2021 |
+| R30 Ida y vuelta por Bundle | Bundle mínimo con `DiagnosticReport` solo de IA aprobada; validación completa antes de escribir; `Task` de respuesta; avisos en vivo | `app/services/interop/roundtrip.py`; `tests/test_interop_roundtrip.py::test_an_invalid_bundle_is_a_422_with_an_operation_outcome_and_stores_nothing` | Ley 2015/2020 y Res. 866/2021; Res. 1888/2025; Res. 1995/1999 |
+| R31 Credenciales de sistema | OAuth2 *client credentials* con `aud` propio y alcance por recurso; un token de sistema no sirve en rutas de usuario | `app/services/interop/clientes.py`; `tests/test_interop_receiver.py::test_a_system_token_is_refused_on_user_routes` | Ley 1581/2012, art. 4 lit. g y art. 17 lit. d* |
+| R32 Consentimiento y minimización | Sin consentimiento vigente para el destino no se arma ni se envía; el Bundle solo lleva lo necesario | `app/services/consents.py`; `tests/test_interop_roundtrip.py::test_the_consent_gate_blocks_before_anything_is_built_or_sent`; `tests/test_minimal_bundle.py` | Ley 1581/2012, art. 4 lit. b y f, arts. 5 y 6 |
+| R33 Demostración cruzada | **No implementada**: espera al equipo socio; hay autoprueba (`scripts/probar_sistema.py`) | `docs/ENTREGA_FINAL.md` | Las de R29 a R32 |
+
+Con asterisco (*): cita tomada de la diapositiva 22 del curso, sin contrastar con el texto oficial. La Res. 3100/2019
+(habilitación de servicios) aplica a los controles de limpieza de camas (R01 a R22); en R23 a R33 solo se cita en el
+modelo STRIDE, para la categoría de denegación de servicio.
 
 ## Puesta en marcha y despliegue
 
@@ -261,14 +410,21 @@ docker run --rm python:3.12-slim python -c "import secrets; print(secrets.token_
 ```
 
 Variables opcionales, solo por nombre (valores por defecto en `.env.example` y `app/core/config.py`):
-`DATABASE_URL`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `JWT_ALGORITHM`,
-`ACCESS_TOKEN_EXPIRE_MINUTES`, `ENVIRONMENT`, `API_V1_PREFIX`, `SEED_ON_START`, `SEED_DEFAULT_PASSWORD`,
+`DATABASE_URL`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`,
+`ACCESS_TOKEN_EXPIRE_MINUTES` (15 por defecto), `JWT_ISSUER`, `JWT_AUDIENCE`, `ENVIRONMENT`, `API_V1_PREFIX`, `SEED_ON_START`, `SEED_DEFAULT_PASSWORD`,
 `FHIR_BASE_URL`, `FHIR_IDENTIFIER_SYSTEM`, `FHIR_REQUEST_TIMEOUT_SECONDS`, `FHIR_AUTO_SYNC`,
 `FHIR_HOOK_ENDPOINT`, `HAPI_DATABASE_URL`, `HAPI_DATABASE_USER`, `HAPI_DATABASE_PASSWORD`,
 `ORTHANC_URL`, `ORTHANC_USER`, `ORTHANC_PASSWORD`, `ORTHANC_TIMEOUT_SECONDS`, `ML_SERVICE_URL`,
 `MONGO_ROOT_USER`, `MONGO_DB`, `CORS_ALLOWED_ORIGINS`, `REQUIRE_CLEANING_EVIDENCE`,
 `ALERT_ESCALATION_ENABLED`, `ALERT_ESCALATION_MINUTES`, `ALERT_MONITOR_INTERVAL_SECONDS`,
 `BED_CLEANING_ALERT_MINUTES`, `AI_AUTO_ANALYSIS`, `AI_AUTO_GRACE_SECONDS`, `REQUIRE_REVIEW_NOTE` y `LOG_LEVEL`.
+
+Seguridad de la entrega final (todas opcionales; sin ellas todo funciona como antes):
+`RATE_LIMIT_ENABLED`, `RATE_LIMIT_MAX_REQUESTS` (10), `RATE_LIMIT_WINDOW_SECONDS` (10),
+`RATE_LIMIT_GENERAL_MAX_REQUESTS` (300), `TRUST_CF_CONNECTING_IP` y, **secretas**, `FIELD_ENCRYPTION_KEYS`
+(`k1:<base64 de 32 bytes>,k2:...`), `FIELD_ENCRYPTION_ACTIVE_KID` y `BLIND_INDEX_KEY` (distinta de las llaves de
+cifrado). Cifrar los datos que ya existen es un paso aparte y requiere aprobación (ver
+[`docs/ENTREGA_FINAL.md`](docs/ENTREGA_FINAL.md), decisión D1).
 
 Si el despliegue usa una base gestionada (Neon), definir `DATABASE_URL` con el prefijo
 `postgresql+psycopg://` y `?sslmode=require`; para HAPI, `HAPI_DATABASE_URL` en formato JDBC. Con bases
@@ -402,7 +558,8 @@ docker compose exec api python -m scripts.smoke_api                # prueba de h
 docker compose exec -e SMOKE_FHIR=1 api python -m scripts.smoke_api   # incluye la integración FHIR
 ```
 
-Resultado de referencia (13/10/2026): 644 pruebas de la API, 39 del servicio `ml` y 274 del frontend, en verde.
+Resultado de referencia de la API (20/11/2026, en la ASUS): la suite completa pasa con 1343 pruebas (cifra informada
+por el equipo). Las cifras del servicio `ml` (39) y del frontend (274) son del 13/10/2026 y no se recontaron.
 
 ## Autenticación, roles y usuarios de prueba
 
@@ -486,6 +643,11 @@ docker compose exec api python -m scripts.seed --reset --patients 400  # volumen
 | [`docs/EVENTOS.md`](docs/EVENTOS.md) | Catálogo de eventos, canal en vivo, alertas, escalamiento y `Subscription` de FHIR |
 | [`docs/IA.md`](docs/IA.md) | Seudonimización, firma clínica, modelos, umbrales y sesgo por subgrupo |
 | [`docs/INTEROPERABILIDAD.md`](docs/INTEROPERABILIDAD.md) | Sincronización con HAPI, `Bundle`, `ServiceRequest` y marco normativo |
+| [`docs/STRIDE.md`](docs/STRIDE.md) | Modelo de amenazas: diagrama de flujo de datos con fronteras de confianza y una tabla por categoría STRIDE |
+| [`docs/AGENTE.md`](docs/AGENTE.md) | Agente clínico: arquitectura, herramientas por rol, aprobación humana, privacidad, auditoría y defensa contra inyección |
+| [`docs/RAG.md`](docs/RAG.md) | Asistente con RAG: bases de conocimiento, recuperación, respuesta con fuentes, evaluación y limitaciones |
+| [`docs/INTEROP.md`](docs/INTEROP.md) | Intercambio API a API con otros equipos: OAuth2, firma HMAC, identificador federado, perfil común, códigos, registro de socios, tester y remisión de ida y vuelta (`Bundle` y `Task`) |
+| [`docs/ENTREGA_FINAL.md`](docs/ENTREGA_FINAL.md) | Matriz de brechas de la entrega final, decisiones pendientes de aprobación y evidencias |
 | [`docs/CONTABILIDAD.md`](docs/CONTABILIDAD.md) | Facturación en MongoDB: documentos, índices, flujos y conciliación |
 | [`docs/DATASETS.md`](docs/DATASETS.md) | Conjuntos de datos, licencias, grupos y limitaciones |
 | [`docs/modelo-datos-y-fhir.md`](docs/modelo-datos-y-fhir.md) | Modelo de datos y mapeo hacia FHIR |
@@ -518,18 +680,64 @@ referencia del flujo de camas. Todas usan datos sintéticos.
 - Las credenciales se leen de variables de entorno; `.env` está excluido del control de versiones y
   `.env.example` documenta la forma de la configuración sin ningún valor real. Los secretos obligatorios no
   tienen valor por defecto: sin ellos el sistema no arranca.
-- Las contraseñas se almacenan con bcrypt, nunca en texto plano.
+- Las contraseñas se almacenan con **Argon2id** (`pwdlib`), nunca en texto plano. Los hashes bcrypt antiguos
+  siguen sirviendo y se reescriben como Argon2id en el primer inicio de sesión correcto (`verify_and_update`).
+- El JWT lleva solo el id y el rol más `iat`, `exp` (15 minutos), `iss` y `aud`; se acepta únicamente `HS256`
+  (el algoritmo está fijo en el código, así que `alg: none` se rechaza). El rol se vuelve a leer de la base de
+  datos en cada petición.
+- **Cifrado de campos** (AES-256-GCM): documento, teléfono, correo y dirección del paciente se guardan como
+  `v1.<kid>.<nonce>.<cifrado>`, con el id del paciente en los datos asociados (copiar el valor a otro paciente
+  falla). Los datos clínicos quedan en claro. El documento se busca con un **índice ciego** (HMAC-SHA256 del
+  documento normalizado, con una llave distinta): `1144-123-456` encuentra `1.144.123.456`. Sin llaves
+  configuradas el sistema se comporta como antes.
+- **Auditoría encadenada**: cada fila de `audit_log` guarda el hash de la anterior;
+  `GET /api/v1/audit-logs/verify` (solo admin) recorre la cadena e informa la primera fila rota.
+  Límite: borrar las últimas filas no se detecta, por eso `GET /api/v1/audit-logs/head` y
+  `scripts/publicar_hash_auditoria.py` entregan el último hash para publicarlo cada día fuera de la base.
+- Límite de tasa en FastAPI (ventana deslizante por IP): 10 peticiones cada 10 s en el inicio de sesión,
+  `/oauth/token`, `/interop/*` y `/agente/*`, con un tope mayor configurable en el resto; el exceso recibe 429
+  con `Retry-After`. `/health` y los canales en vivo no se limitan.
+- `scripts/escanear_secretos.py` busca secretos en los archivos versionados y en `git log -p` (sin imprimir
+  nunca el valor); `.env`, `pass.env`, `*.env` y `.env.bak*` están en `.gitignore`. Un secreto que llegó a un
+  commit sigue en el historial: hay que **rotarlo**, no solo borrarlo.
+- **Identidad de sistemas** (interoperabilidad con otros equipos, [`docs/INTEROP.md`](docs/INTEROP.md)):
+  OAuth 2.0 *client credentials* (`POST /oauth/token`, token de 10 minutos con `aud` propio y solo los
+  alcances registrados, distinto del JWT de usuario) y firma HMAC-SHA256 por mensaje con fecha, nonce de un
+  solo uso y cuerpo (401 firma o fecha, 409 repetido). El paciente viaja como identificador federado, no como
+  documento.
 - La autorización se resuelve en el backend por rol, por institución y por pertenencia del registro. Un
   endpoint no se protege ocultándolo.
 - Tres intentos fallidos bloquean la cuenta. Una cuenta bloqueada se rechaza **antes** de verificar la
   contraseña; un usuario inexistente recibe la misma respuesta que una contraseña incorrecta. Cada intento,
   bloqueo y desbloqueo queda en la auditoría y el bloqueo avisa al administrador.
-- nginx limita la tasa (429), envía una `Content-Security-Policy` y cabeceras de seguridad; CORS permanece
-  cerrado salvo que se configuren orígenes.
+- nginx limita la tasa (429) para lo que entra por el contenedor `web`, y envía una `Content-Security-Policy` y
+  cabeceras de seguridad; CORS permanece cerrado salvo que se configuren orígenes. Detrás de nginx todos los
+  clientes comparten la dirección del contenedor salvo que `TRUST_CF_CONNECTING_IP=true` (solo seguro si la API
+  no es alcanzable directo): ajuste `RATE_LIMIT_GENERAL_MAX_REQUESTS` si hace falta.
 - Al servicio de IA solo llegan variables clínicas y un seudónimo; MongoDB no guarda datos personales.
 
-La correspondencia con la Ley 1581 de 2012, la Ley 2015 de 2020 y las resoluciones 866 de 2021, 1888 de 2025,
-1995 de 1999 y 3100 de 2019 está en [`docs/NORMATIVA.md`](docs/NORMATIVA.md).
+### Mapa normativo (R22)
+
+Cada control responde a una norma. El detalle (archivo, endpoint y prueba de cada control) está en
+[`docs/NORMATIVA.md`](docs/NORMATIVA.md). Las filas marcadas con * siguen la diapositiva 22 del profesor y no se
+contrastaron con el texto oficial.
+
+| Control | Norma |
+|---|---|
+| Hash (Argon2id), bloqueo, JWT y roles | Ley 1581 de 2012, art. 4 lit. g (principio de seguridad) y art. 17 lit. d (deber de conservar la información con seguridad)* |
+| Seudonimización hacia la IA | Ley 1581 de 2012, art. 4 lit. b (finalidad) y f (acceso y circulación restringida) |
+| Cifrado de campos e índice ciego | Ley 1581 de 2012, arts. 5 y 6 (los datos de salud son sensibles)* |
+| Auditoría encadenada | Resolución 1995 de 1999 (integridad y custodia de la historia clínica)* |
+| Perfil FHIR común | Ley 2015 de 2020 y Resolución 866 de 2021 (historia clínica interoperable) |
+| Incidentes de seguridad | Reporte a la SIC dentro de los 15 días hábiles siguientes a la detección* |
+| Acceso abusivo a sistemas | Ley 1273 de 2009, arts. 269A y 269F (delitos informáticos)* |
+
+Notas: hay un proyecto de reforma parcial a la Ley 1581 radicado en el Congreso; mientras no se apruebe, rige la
+Ley 1581 (verificar su estado antes de sustentar). La Resolución 2654 de 2019 (telesalud) aplica cuando una remisión
+entre instituciones implica atención a distancia; la Resolución 3100 de 2019 rige la habilitación de servicios.
+
+La correspondencia completa con la Ley 1581 de 2012, la Ley 2015 de 2020 y las resoluciones 866 de 2021, 1888 de
+2025, 1995 de 1999 y 3100 de 2019 está en [`docs/NORMATIVA.md`](docs/NORMATIVA.md).
 
 ## Estado y limitaciones
 
@@ -541,7 +749,20 @@ Prototipo académico funcional. Limitaciones principales (detalle en [`docs/IA.m
 - Los túneles rápidos de Cloudflare no entregan SSE (el canal público es WebSocket) y cambian de URL en cada
   reinicio.
 - HAPI 7.4 entrega las suscripciones con una tarea de 5 s.
-- No se implementa cifrado a nivel de campo, OAuth2/SMART on FHIR ni escalado a varias réplicas de la API.
+- El cifrado de campos está implementado, pero los datos que ya existen en la base compartida siguen en claro
+  hasta que se apruebe y ejecute el relleno (`scripts/cifrar_pacientes.py`). OAuth2 de sistema existe solo para
+  el intercambio entre equipos (`client credentials`, sin SMART Backend Services con llave privada); no hay
+  escalado a varias réplicas de la API (el límite de tasa y el bloqueo de IP viven en el proceso).
+- Los tokens duran 15 minutos y la interfaz no los renueva: al vencer pide iniciar sesión de nuevo.
+- La demostración cruzada con otro equipo (R33) **no está hecha**: el socio no está asignado. La remisión de ida y
+  vuelta (R30) se probó con SaludRed como su propio socio; el contrato con un equipo real (firma e identificador
+  federado) sigue siendo configurable.
+- Un rechazo por validación (nuestro receptor o el del socio) queda en la auditoría y en el estado de la remisión,
+  pero no publica un aviso en vivo ([`docs/EVENTOS.md`](docs/EVENTOS.md)).
+- La detección de prompt injection es por patrones y su bloqueo temporal vive en la memoria del proceso; la barrera
+  real es el backend y la aprobación humana ([`docs/AGENTE.md`](docs/AGENTE.md)).
+- No hay despliegue en un servidor gratuito: el sistema se publica por túneles rápidos de Cloudflare, cuyas URL
+  cambian en cada reinicio.
 
 ## Licencia
 

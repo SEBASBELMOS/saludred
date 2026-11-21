@@ -170,7 +170,7 @@ La barrera de seudonimización es transparente (se ve todo lo que pasa) pero no 
   - *Context precision*: fracción de fragmentos recuperados que son relevantes, ponderada por posición (`Σ precision@k · relevante_k / Σ relevante_k`). Baja = ruido en el contexto.
   - *Context recall*: fracción de frases de la respuesta de referencia que el contexto puede respaldar. Baja = falta evidencia.
 
-  Meta del curso: **≥ 0.75** en cada una. Ojo: el juez es el mismo modelo que genera, lo que favorece las notas; son una guía relativa, no una verdad absoluta.
+  Meta del curso: **≥ 0.75** en cada una. El juez (`RAG_JUDGE_MODEL`) es un modelo distinto del que genera, para que no se califique a sí mismo; aun así las notas son una guía relativa, no una verdad absoluta.
 
 ## Cómo ejecutarlo
 
@@ -221,7 +221,9 @@ Variables de entorno (ver `.env.example`):
 | `GROQ_API_KEY` | vacía | Clave de Groq. Sin ella: modo extractivo. Nunca se versiona |
 | `GROQ_MODEL` | `qwen/qwen3.8-27b` | Modelo de lenguaje y juez |
 | `RAG_JUDGE_MODEL` | vacía | Modelo juez de la evaluación (también `--judge-model`). Vacío: el modelo generador. Los límites de Groq son **por modelo**: un juez distinto reparte la cuota y evita que el modelo se califique a sí mismo |
-| `GROQ_TIMEOUT_SECONDS` | `30` | Espera de Groq; al agotarse se responde en modo extractivo |
+| `GROQ_TIMEOUT_SECONDS` | `30` | Espera de Groq para el modelo juez |
+| `GROQ_ATTEMPT_TIMEOUT_SECONDS` | `8` | Espera de cada intento del modelo que responde |
+| `GROQ_TIMEOUT_RETRIES` | `2` | Reintentos tras una espera agotada; si se acaban, se responde en modo extractivo |
 | `GROQ_MAX_TOKENS` | `600` | Tope de la respuesta (qwen3 razona antes de responder; se envía `reasoning_format: hidden`) |
 | `RAG_RRF_DENSE_WEIGHT` / `RAG_RRF_LEXICAL_WEIGHT` | `3.0` / `1.0` | RRF ponderado: `w_denso/(60+rango_denso) + w_léxico/(60+rango_bm25)`. 1/1 es RRF clásico; con un corpus mixto es/en BM25 es débil y conviene dar más peso al denso |
 | `RAG_DENSE_FLOOR` | `0.25` | Coseno mínimo para que un candidato denso entre a la fusión |
