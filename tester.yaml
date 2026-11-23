@@ -33,9 +33,9 @@ equipo:
 #   docker compose logs tunnel-fhir | grep trycloudflare
 # --------------------------------------------------------------------------
 url_publica:
-  web: https://call-rogers-tooth-routes.trycloudflare.com   # SPA y proxy de /api (nginx)
-  api: https://thorough-wallace-roommates-nose.trycloudflare.com         # API directa (Swagger en /docs)
-  fhir: https://establishing-sharp-delivering-companies.trycloudflare.com         # HAPI FHIR; el servidor vive bajo /fhir
+  web: https://permanent-antivirus-rated-relating.trycloudflare.com   # SPA y proxy de /api (nginx)
+  api: https://provide-improving-acne-columnists.trycloudflare.com         # API directa (Swagger en /docs)
+  fhir: https://coding-routines-greetings-meat.trycloudflare.com         # HAPI FHIR; el servidor vive bajo /fhir
   # Si el tester solo admite una URL base, usar url_publica.web: nginx reenvia
   # /api, /health y /docs hacia la API.
 
